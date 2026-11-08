@@ -1,0 +1,5 @@
+.DS_Store
+# Private: your inbox key and Spacefast credentials
+.prompter-key
+.spacefast/
+dist/

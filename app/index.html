@@ -105,8 +105,6 @@ button { cursor: pointer; }
 #heard::before { content: "\201C"; } #heard::after { content: "\201D"; }
 #heard.hint::before, #heard.hint::after { content: none; }
 #heard.hint { color: rgba(255,255,255,.6); }
-#heard.cmd { color: #1a1208; background: var(--accent); font-weight: 600; }
-#heard.cmd::before, #heard.cmd::after { content: none; }
 #heard.show { opacity: 1; transform: translate(-50%, 0); }
 .mirror-x #heard { transform: translate(-50%, 0) scaleX(-1); }
 #countdown {
@@ -574,7 +572,6 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
     <div class="row"><span>Mirror horizontally</span><label class="toggle"><input type="checkbox" id="t-mirrorx"><i></i></label></div>
     <div class="row"><span>Flip vertically</span><label class="toggle"><input type="checkbox" id="t-mirrory"><i></i></label></div>
     <div class="row"><span>Auto-load new scripts</span><label class="toggle"><input type="checkbox" id="t-autoload"><i></i></label></div>
-    <div class="row"><span>Voice commands (“Prompter, …”)</span><label class="toggle"><input type="checkbox" id="t-voicecmd"><i></i></label></div>
     <div class="row"><span>Voice language</span>
       <select class="field" id="s-lang" style="width:auto;padding:7px 10px">
         <option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="en-AU">English (AU)</option>
@@ -598,20 +595,6 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
     <p class="muted">Add your connector link to Claude, ChatGPT, Grok or Cursor and just ask: <i>“write me a 60-second intro and put it on my prompter.”</i> The link includes your key, so it's never shown here.</p>
     <button class="btn primary copy-mcp" data-act="copy-mcp" style="width:100%;height:44px">Copy connector link</button>
     <button class="btn copy-bot" data-act="copy-bot" style="width:100%;margin-top:6px;color:var(--ui-mute)">Or copy plain API instructions</button>
-
-    <div class="label">Voice commands</div>
-    <p class="muted" style="margin:0 0 8px">In voice mode, start with “Prompter”, then:</p>
-    <div class="keys">
-      <kbd>pause</kbd><span>Stop scrolling but keep listening</span>
-      <kbd>go</kbd><span>Carry on</span>
-      <kbd>again</kbd><span>Back to the start of this sentence (marks a flub when recording)</span>
-      <kbd>go back</kbd><span>Previous sentence</span>
-      <kbd>next</kbd><span>Next sentence</span>
-      <kbd>start again</kbd><span>Back to the top</span>
-      <kbd>flub</kbd><span>Mark a flub while recording</span>
-      <kbd>bigger / smaller</kbd><span>Text size</span>
-      <kbd>stop listening</kbd><span>Turn the mic off</span>
-    </div>
 
     <div class="label">Keys</div>
     <div class="keys">
@@ -686,7 +669,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   const small = matchMedia("(max-width: 720px)").matches;
   const S = Object.assign({
     theme: "night", font: "sans", size: small ? 38 : 60, lh: 1.45, measure: 32, guide: 34, center: false,
-    showGuide: true, dim: true, countdown: true, mirrorX: false, mirrorY: false, autoload: true, voiceCommands: true,
+    showGuide: true, dim: true, countdown: true, mirrorX: false, mirrorY: false, autoload: true,
     mode: "SpeechRecognition" in window || "webkitSpeechRecognition" in window ? "voice" : "auto", speed: 10, lang: navigator.language?.startsWith("en-GB") ? "en-GB" : "en-US",
   }, store.get("settings", {}));
   const save = () => store.set("settings", S);
@@ -734,7 +717,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   };
   bindToggle("#t-center", "center"); bindToggle("#t-guide", "showGuide"); bindToggle("#t-dim", "dim");
   bindToggle("#t-countdown", "countdown"); bindToggle("#t-mirrorx", "mirrorX"); bindToggle("#t-mirrory", "mirrorY");
-  bindToggle("#t-autoload", "autoload"); bindToggle("#t-voicecmd", "voiceCommands");
+  bindToggle("#t-autoload", "autoload");
   $("#s-lang").value = S.lang;
   $("#s-lang").addEventListener("change", e => { S.lang = e.target.value; save(); if (recog) { stopVoice(); if (playing) startVoice(); } });
 
@@ -904,83 +887,6 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   let recog = null, heard = [], wantVoice = false, voiceOn = false, micTrack = null;
   const voiceDiag = { starts: 0, lastResult: 0, lastError: "" };
-  let handledResults = new Set(), heardFrom = 0;
-
-  // ---------- Voice commands ----------
-  // "Prompter, …" while voice mode is listening. Phrases are checked in order, so "go back" wins over "go".
-  const WAKE = /\b(?:hey |ok |okay )?(?:tele)?(?:prompter|promptor|prompters|promoter|prompt her)\b\s*(.*)$/;
-  const COMMANDS = [
-    ["off", /^(stop listening|mic off|microphone off|that's all|that is all|we're done|finished)\b/],
-    ["top", /^(start again|start over|from the top|back to the start|back to the top|restart|top)\b/],
-    ["back", /^(go back|back up|back|previous)\b/],
-    ["again", /^(again|one more time|redo|retake|take that again|let me try again|try again)\b/],
-    ["next", /^(next|skip|go forward|forward)\b/],
-    ["flub", /^(flub|mark that|mark it|mark)\b/],
-    ["bigger", /^(bigger|larger|zoom in|make it bigger)\b/],
-    ["smaller", /^(smaller|zoom out|make it smaller)\b/],
-    ["pause", /^(pause|stop|hold on|hang on|wait)\b/],
-    ["go", /^(go|continue|resume|carry on|keep going|start|play|okay go|ok go)\b/],
-  ];
-  function parseCommand(transcript) {
-    const t = transcript.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, " ").replace(/\s+/g, " ").trim();
-    const m = t.match(WAKE);
-    if (!m) return null;
-    const rest = m[1].trim();
-    // "Prompter" might just be a word in the script you're reading.
-    const first = norm(rest.split(" ")[0] || "");
-    for (let j = Math.max(0, cursor - 12); j < Math.min(words.length - 1, cursor + 40); j++) {
-      if (/prompter/.test(words[j].norm) && (!first || words[j + 1].norm === first)) return null;
-    }
-    const hit = COMMANDS.find(([, re]) => re.test(rest));
-    return hit ? hit[0] : { unknown: rest };
-  }
-  function commandStart(transcript) {
-    const m = transcript.match(/\b(?:hey |ok |okay )?(?:tele)?(?:prompter|promptor|prompters|promoter|prompt her)\b/i);
-    return m && parseCommand(transcript.slice(m.index)) ? m.index : -1;
-  }
-  // A sentence starts at the top, after . ! or ?, or at a new paragraph or heading.
-  function sentenceStartAt(i) {
-    const boundary = k => k <= 0 || /[.!?…]["'”’)]*$/.test(words[k - 1].el.textContent) || words[k - 1].el.closest("p, h2") !== words[k].el.closest("p, h2");
-    let k = Math.max(0, Math.min(i, words.length - 1));
-    while (!boundary(k)) k--;
-    return k;
-  }
-  function jumpTo(i) {
-    cursor = Math.max(0, Math.min(words.length, i));
-    const y = Math.max(0, Math.min(maxPos, cursor ? targetFor(cursor) : 0));
-    if (playing) voiceTarget = y; else { pos = y; voiceTarget = null; setScroll(pos); }
-    markSpoken(); progress();
-  }
-  // Paused by voice: the page stops scrolling but the mic stays on, waiting for "Prompter, go".
-  function standby() { playing = false; voiceTarget = null; setPlayUi(); wake(); }
-  function resumeVoice() { if (!wantVoice) return play(); playing = true; lastT = performance.now(); setPlayUi(); scheduleIdle(); }
-  const COMMAND_LABEL = { off: "mic off", top: "from the top", back: "go back", again: "again", next: "next", flub: "flub marked", bigger: "bigger", smaller: "smaller", pause: "paused", go: "go" };
-  function runCommand(cmd) {
-    if (cmd.unknown !== undefined) return showHeard(cmd.unknown ? `Prompter didn't catch “${cmd.unknown}”` : "Prompter is listening", true);
-    const say = () => showHeard("Prompter: " + COMMAND_LABEL[cmd], false, true);
-    switch (cmd) {
-      case "off": return pause(), toast("Mic off. Press Listen to start again.", null, 3000);
-      case "pause": standby(); break;
-      case "go": resumeVoice(); break;
-      case "top": jumpTo(0); break;
-      case "next": { let k = cursor + 1; const s0 = sentenceStartAt(cursor); while (k < words.length && sentenceStartAt(k) === s0) k++; jumpTo(k); break; }
-      case "back": jumpTo(sentenceStartAt(Math.max(0, sentenceStartAt(cursor) - 1))); break;
-      case "again": {
-        let k = sentenceStartAt(cursor);
-        if (cursor - k <= 1 && k > 0) k = sentenceStartAt(k - 1); // only just started a sentence: redo the one before
-        if (recorder) markFlub();
-        jumpTo(k); break;
-      }
-      case "flub": if (!recorder) return showHeard("Prompter: flubs are for recording", true); markFlub(); break;
-      case "bigger": case "smaller": {
-        const d = cmd === "bigger" ? 1 : -1;
-        if (pipWin) actions[d > 0 ? "pip-larger" : "pip-smaller"]();
-        else { S.size = Math.max(24, Math.min(140, S.size + d * 4)); $("#s-size").value = S.size; save(); applySettings(); }
-        break;
-      }
-    }
-    say();
-  }
 
   function startVoice() {
     if (!SR) { toast("Voice scrolling needs Chrome, Edge or Safari. Switched to steady scrolling.", null, 4500); setMode("auto"); return false; }
@@ -990,27 +896,15 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     recog = new Recognizer();
     recog.lang = S.lang; recog.continuous = true; recog.interimResults = true; recog.maxAlternatives = 1;
     let errors = [];
-    recog.onstart = () => { voiceOn = true; voiceDiag.starts++; handledResults = new Set(); heardFrom = 0; setStatus(); showHeard("Listening — start reading the first line", true); };
+    recog.onstart = () => { voiceOn = true; voiceDiag.starts++; setStatus(); showHeard("Listening — start reading the first line", true); };
     recog.onresult = e => {
       voiceDiag.lastResult = Date.now();
       // Use the whole session transcript so the matcher always sees the last several words.
       let txt = "";
-      const commands = [];
-      for (let i = 0; i < e.results.length; i++) {
-        const said = e.results[i][0].transcript, cut = S.voiceCommands !== false ? commandStart(said) : -1;
-        txt += " " + (cut >= 0 ? said.slice(0, cut) : said); // words to Prompter, even half-said, aren't reading
-        // A command is acted on once its words are final, so "Prompter, go back" can't fire as "Prompter, go".
-        if (S.voiceCommands !== false && e.results[i].isFinal && i >= e.resultIndex && !handledResults.has(i)) {
-          handledResults.add(i);
-          const cmd = parseCommand(e.results[i][0].transcript.slice(Math.max(0, commandStart(e.results[i][0].transcript))));
-          if (cmd) commands.push(cmd);
-        }
-      }
+      for (let i = 0; i < e.results.length; i++) txt += " " + e.results[i][0].transcript;
       heard = txt.split(/\s+/).map(norm).filter(Boolean);
-      if (!commands.length) showHeard(txt.trim().split(/\s+/).slice(-9).join(" "));
-      if (playing) follow(heard.slice(heardFrom)); // reading said before a command still counts
-      // After a command, the matcher starts fresh so its words can't pull the place around.
-      if (commands.length) { commands.forEach(runCommand); heardFrom = heard.length; }
+      showHeard(txt.trim().split(/\s+/).slice(-9).join(" "));
+      if (playing) follow(heard);
     };
     recog.onerror = e => {
       voiceDiag.lastError = e.error;
@@ -1069,9 +963,9 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   });
   navigator.mediaDevices?.addEventListener?.("devicechange", listMics);
   let heardTimer;
-  function showHeard(t, hint, cmd) {
+  function showHeard(t, hint) {
     const el = $("#heard");
-    el.textContent = t; el.classList.toggle("hint", !!hint); el.classList.toggle("cmd", !!cmd); el.classList.toggle("show", !!t);
+    el.textContent = t; el.classList.toggle("hint", !!hint); el.classList.toggle("show", !!t);
     clearTimeout(heardTimer);
     if (t && !hint) heardTimer = setTimeout(() => el.classList.remove("show"), 2500);
   }
@@ -1533,7 +1427,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   function setStatus() {
     const st = $("#status");
     st.className = "glass" + (voiceOn ? " listening" : online ? " live" : "");
-    $(".txt", st).textContent = voiceOn ? (playing ? "Listening" : "Paused · say “Prompter, go”") : wantVoice ? "Starting mic…" : online ? "Inbox live" : key ? "Reconnecting…" : "Not connected";
+    $(".txt", st).textContent = voiceOn ? (playing ? "Listening" : "Paused") : wantVoice ? "Starting mic…" : online ? "Inbox live" : key ? "Reconnecting…" : "Not connected";
   }
 
   const ago = t => {

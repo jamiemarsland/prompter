@@ -30,6 +30,10 @@ Video never goes to the server (Spacefast app storage is capped at 5 MiB a file)
 Get your own copy running on Spacefast in one click, with its own database and inboxes:
 [Remix Prompter](https://my.spacefast.com/new?git=https%3A%2F%2Fgit.spacefast.com%2Fjamie-team-3%2Fprompter)
 
+## Ideas
+
+See [IDEAS.md](IDEAS.md) for what might come next.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).

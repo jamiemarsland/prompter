@@ -24,3 +24,7 @@ Anyone can click "Create my prompter" (`POST /api/inboxes`) to get a private key
 The camera button records a take while the prompter scrolls. After each take a review panel offers Keep ★, Retake and Discard; pressing X while recording marks a flub.
 
 Video never goes to the server (Spacefast app storage is capped at 5 MiB a file). In Chrome and Edge, Appearance › Save takes to picks a folder and every take is written there as soon as it stops; elsewhere Keep downloads it. The prompter then posts the take's details to `/api/takes`: file name, folder name, length, keeper star, flub times and rough word timings. The connector's `list_takes` and `get_take` tools give those to an editing agent, which finds the file on the user's computer by name.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

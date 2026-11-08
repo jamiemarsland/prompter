@@ -25,6 +25,11 @@ The camera button records a take while the prompter scrolls. After each take a r
 
 Video never goes to the server (Spacefast app storage is capped at 5 MiB a file). In Chrome and Edge, Appearance › Save takes to picks a folder and every take is written there as soon as it stops; elsewhere Keep downloads it. The prompter then posts the take's details to `/api/takes`: file name, folder name, length, keeper star, flub times and rough word timings. The connector's `list_takes` and `get_take` tools give those to an editing agent, which finds the file on the user's computer by name.
 
+## Remix it
+
+Get your own copy running on Spacefast in one click, with its own database and inboxes:
+[Remix Prompter](https://my.spacefast.com/new?git=https%3A%2F%2Fgit.spacefast.com%2Fjamie-team-3%2Fprompter)
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).

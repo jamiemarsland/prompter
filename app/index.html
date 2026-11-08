@@ -1056,7 +1056,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     const was = playing; if (was) pause();
     if (m === "auto") pos = scroller.scrollTop; else cursor = wordAtGuide();
     S.mode = m; save(); applySettings(); lastSpoken = -1; resetSpoken();
-    if (was) play();
+    if (was) play(); else setPlayUi(); // the button says Listen or Start to match
   }
 
   const ICON_PLAY = '<path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/>';

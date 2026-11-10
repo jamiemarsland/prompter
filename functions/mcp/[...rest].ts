@@ -7,7 +7,8 @@ import { describeTake } from "../api/_takes";
 
 const INSTRUCTIONS = `This connector sends scripts to the user's teleprompter. A script you send appears on their prompter screen within a few seconds.
 Write for speaking aloud: short sentences, conversational, no stage-y markdown. About 150 spoken words is one minute.
-Formatting the prompter understands: a blank line between paragraphs; "## Heading" for a section; [square brackets] for delivery notes such as [smile] or [pause] (voice mode skips them); "//" for a breath. Avoid bullet lists, tables, links and emoji.
+Formatting the prompter understands: a blank line between paragraphs; "## Heading" for a section; [square brackets] for delivery notes such as [smile] or [pause] (voice mode skips them); "//" for a breath. Avoid tables, links and emoji, and don't use bullet lists in a word-for-word script.
+Talking points: if the user wants to speak in their own words rather than read (they ask for "talking points", "bullet points", "notes" or "an outline"), send a list with one "- " line per point and nothing else but optional "## " headings. Keep each point to a short phrase of key words, not a sentence, e.g. "- why Elgato's app frustrated me". The prompter shows one point at a time and moves on when it hears them start the next one.
 After sending, tell the user the title and that it's on their prompter. To revise a script after feedback, use update_script with the same id instead of sending a new one.
 
 The user can also record themselves on the prompter. list_takes and get_take describe those recordings so you can edit them: the file name, where it was saved, the moments they marked as flubs, and rough word timings. The video file itself is on the user's computer, not on this server. If you can read their files (for example in Claude Code), find it by name in the folder given, usually under ~/Movies or ~/Downloads; otherwise ask them to share it. Prefer takes marked as keepers.`;
@@ -21,7 +22,7 @@ const TOOLS = [
       type: "object",
       properties: {
         title: { type: "string", description: "Short title shown in the script library, e.g. 'Episode 12 intro'." },
-        text: { type: "string", description: "The full script, written to be read aloud." },
+        text: { type: "string", description: "The full script, written to be read aloud. For talking points, one \"- \" line per point instead." },
       },
       required: ["title", "text"],
     },
@@ -137,7 +138,7 @@ async function handle(msg: Rpc, env: Env, origin: string, inbox: string) {
       return {
         protocolVersion: msg.params?.protocolVersion || "2025-06-18",
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "prompter", title: "Prompter teleprompter", version: "1.1.0" },
+        serverInfo: { name: "prompter", title: "Prompter teleprompter", version: "1.2.0" },
         instructions: INSTRUCTIONS,
       };
     case "ping":

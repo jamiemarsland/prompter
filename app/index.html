@@ -64,6 +64,15 @@ button { cursor: pointer; }
 .w { transition: color .35s, opacity .35s; border-radius: .12em; }
 .dim-spoken .w.spoken { color: var(--dim); }
 .w.now { color: var(--accent); }
+/* Talking points: one point at a time, the next one waiting underneath */
+#text p.point { position: relative; padding-left: 1.05em; transition: opacity .35s; }
+#text p.point::before { content: "•"; position: absolute; left: 0; color: var(--accent); }
+#text p.point.done::before { content: "✓"; }
+body.points.voice #text p.point { opacity: .32; }
+body.points.voice #text p.point.next { opacity: .62; }
+body.points.voice #text p.point.current { opacity: 1; }
+body.points .w.now { color: inherit; }
+body.points.dim-spoken .w.spoken { color: inherit; }
 .cue { color: var(--cue); font-size: .6em; font-style: italic; font-weight: 500; vertical-align: .15em; opacity: .9; }
 .pause { display: inline-block; width: .7em; height: .7em; border-radius: 50%; border: .08em solid var(--cue); vertical-align: -.02em; margin: 0 .15em; opacity: .7; }
 
@@ -731,13 +740,27 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   const norm = w => w.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[’']/g, "").replace(/[^\p{L}\p{N}]+/gu, "");
   const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+  // A script that's a list of "- " lines is talking points: you speak about each one in your own words.
+  const BULLET = /^\s*(?:[-*•]|\d+[.)])\s+/;
+  function isPoints(body) {
+    const lines = body.split(/\r?\n/).map(l => l.trim()).filter(l => l && !/^#{1,6}\s/.test(l));
+    const bullets = lines.filter(l => BULLET.test(l)).length;
+    return bullets >= 2 && bullets >= lines.length * 0.6;
+  }
+  let points = []; // { el, from, to, keys } while the script is talking points
   function render(body, { animate = true } = {}) {
     words = [];
     const html = [];
-    const paras = body.replace(/\r\n?/g, "\n").split(/\n\s*\n/);
+    const asPoints = isPoints(body);
+    body = body.replace(/\r\n?/g, "\n");
+    // Each point is its own paragraph, even when the list has no blank lines between items.
+    if (asPoints) body = body.split("\n").map(l => (BULLET.test(l) ? "\n" + l.replace(BULLET, "\u2063") : l)).join("\n");
+    const paras = body.split(/\n\s*\n/);
     for (const para of paras) {
-      const p = para.trim();
+      let p = para.trim();
       if (!p) continue;
+      const isPoint = asPoints && p.startsWith("\u2063");
+      p = p.replace(/^\u2063/, "");
       if (/^#{1,6}\s/.test(p)) { html.push(`<h2>${esc(p.replace(/^#+\s*/, "").replace(/\*+/g, ""))}</h2>`); continue; }
       let out = "", inBold = false;
       const lines = p.split("\n");
@@ -761,12 +784,17 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
         }
         if (li < lines.length - 1) out += "<br>";
       });
-      html.push(`<p>${out}</p>`);
+      html.push(isPoint ? `<p class="point">${out}</p>` : `<p>${out}</p>`);
     }
     textEl.innerHTML = html.join("");
     textEl.classList.remove("enter");
     if (animate) { void textEl.offsetWidth; textEl.classList.add("enter"); }
     $$(".w", textEl).forEach((el, i) => (words[i].el = el));
+    points = $$("p.point", textEl).map(el => {
+      const ws = $$(".w", el);
+      return ws.length ? { el, from: +ws[0].dataset.i, to: +ws[ws.length - 1].dataset.i, keys: keyWords(ws.map(w => words[+w.dataset.i].norm)) } : null;
+    }).filter(Boolean);
+    document.body.classList.toggle("points", points.length > 0);
     document.body.classList.toggle("has-script", words.length > 0);
     cursor = 0; pos = 0; scroller.scrollTop = 0;
     measure(); markSpoken(); updateWpm();
@@ -847,13 +875,20 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   let lastSpoken = -1, nowEl = null;
   function markSpoken() {
     const upto = S.mode === "voice" ? cursor : wordAtGuide();
-    if (upto === lastSpoken) return;
+    if (upto === lastSpoken) return updatePoints();
     const [a, b] = upto > lastSpoken ? [Math.max(0, lastSpoken), upto] : [upto, lastSpoken];
     for (let i = a; i < b && i < words.length; i++) words[i].el.classList.toggle("spoken", i < upto);
     lastSpoken = upto;
     nowEl?.classList.remove("now");
     nowEl = S.mode === "voice" && playing ? words[cursor]?.el : null;
     nowEl?.classList.add("now");
+    updatePoints();
+  }
+  // Ticks only on points you actually talked about, so a skipped one stays unticked.
+  function updatePoints() {
+    if (!points.length) return;
+    const k = pointAt(cursor);
+    points.forEach((pt, j) => { pt.el.classList.toggle("current", j === k); pt.el.classList.toggle("next", j === k + 1); pt.el.classList.toggle("done", !!pt.covered); });
   }
   function resetSpoken() { words.forEach(w => w.el.classList.remove("spoken")); lastSpoken = -1; markSpoken(); }
 
@@ -896,7 +931,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     recog = new Recognizer();
     recog.lang = S.lang; recog.continuous = true; recog.interimResults = true; recog.maxAlternatives = 1;
     let errors = [];
-    recog.onstart = () => { voiceOn = true; voiceDiag.starts++; setStatus(); showHeard("Listening — start reading the first line", true); };
+    recog.onstart = () => { voiceOn = true; voiceDiag.starts++; setStatus(); showHeard(points.length ? "Listening — talk about the first point" : "Listening — start reading the first line", true); pointHeardFrom = 0; };
     recog.onresult = e => {
       voiceDiag.lastResult = Date.now();
       // Use the whole session transcript so the matcher always sees the last several words.
@@ -970,8 +1005,44 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     if (t && !hint) heardTimer = setTimeout(() => el.classList.remove("show"), 2500);
   }
 
+  // ---------- Talking points ----------
+  // The words that say what a point is about: not "the", "and", "really" and friends.
+  const STOP = new Set("a an and are as at be been but by can could did do does dont for from get got had has have how i if im in into is it its ive just like make me more most my no not now of on one only or our out really say so some than that thats the their them then there these they thing things this those to too up us very was we were what when where which who why will with would you your youre about also because going gonna lot lots kind sort well yeah okay ok actually".split(" "));
+  function keyWords(norms) {
+    return [...new Set(norms.filter(n => (n.length >= 4 || /\d/.test(n)) && !STOP.has(n)))];
+  }
+  const pointAt = i => { let k = 0; points.forEach((pt, j) => { if (pt.from <= i) k = j; }); return k; };
+  let pointHeardFrom = 0; // where in the transcript the current point began
+  // Loose on word endings, so "frustrating" counts for "frustrated".
+  const sameStem = (a, b) => { if (similar(a, b)) return true; let n = 0; while (n < a.length && a[n] === b[n]) n++; return n >= 5 && n >= Math.min(a.length, b.length) - 3; };
+  function hits(pt, spoken) { return pt.keys.filter(key => spoken.some(w => sameStem(w, key))).length; }
+  function goToPoint(k) {
+    k = Math.max(0, Math.min(points.length - 1, k));
+    const was = pointAt(cursor);
+    if (k > was) points[was].covered = true;
+    cursor = points[k].from; pointHeardFrom = heard.length;
+    markSpoken(); updatePoints();
+    const y = Math.max(0, Math.min(maxPos, targetFor(cursor)));
+    if (playing && S.mode === "voice") voiceTarget = y; else { pos = y; voiceTarget = null; setScroll(pos); }
+    progress();
+  }
+  // You talk in your own words, so this listens for each point's key words rather than reading along.
+  function followPoints(spoken) {
+    if (pointHeardFrom > spoken.length) pointHeardFrom = 0; // the mic restarted with a fresh transcript
+    const k = pointAt(cursor), cur = points[k];
+    const since = spoken.slice(pointHeardFrom), recent = spoken.slice(-12);
+    // Started on a later point (or skipped one): move there.
+    for (let j = k + 1; j < points.length; j++) {
+      const pt = points[j], need = Math.min(j === k + 1 ? 2 : 3, pt.keys.length); // jumping further takes more proof
+      if (need && hits(pt, recent) >= need && hits(pt, recent) > hits(cur, recent)) return goToPoint(j);
+    }
+    // Said enough about this one: tick it, and the next point brightens.
+    if (!cur.covered && cur.keys.length && hits(cur, since) >= Math.max(1, Math.ceil(cur.keys.length / 2))) { cur.covered = true; updatePoints(); }
+  }
+
   // Match the tail of what was just heard against the script near the cursor.
   function follow(spoken) {
+    if (points.length) return followPoints(spoken);
     if (!words.length || !spoken.length) return;
     const tail = spoken.slice(-7);
     const from = Math.max(0, cursor - 8), to = Math.min(words.length - 1, cursor + 40);
@@ -1548,6 +1619,27 @@ The reply includes a "url" — share it with me.`;
   // Where each spoken word starts in the source. Follows the same rules as render().
   function wordOffsets(body) {
     const out = [];
+    if (isPoints(body)) {
+      // Same paragraphs as render(): each bullet starts one, and a paragraph starting "#" is a heading.
+      let at = 0, heading = false, fresh = true;
+      for (const line of body.split("\n")) {
+        if (!line.trim()) fresh = true;
+        else {
+          const bullet = line.match(BULLET);
+          if (bullet || fresh) heading = !bullet && /^#{1,6}\s/.test(line.trim());
+          fresh = false;
+          if (!heading) {
+            const skip = bullet ? bullet[0].length : 0;
+            for (const m of line.slice(skip).matchAll(/\[[^\]]*\]|\/\/|(?:(?!\/\/|\[[^\]]*\])\S)+/g)) {
+              if (m[0] === "//" || (m[0].startsWith("[") && m[0].endsWith("]"))) continue;
+              if (norm(m[0].replace(/\*+/g, ""))) out.push(at + skip + m.index);
+            }
+          }
+        }
+        at += line.length + 1;
+      }
+      return out;
+    }
     let at = 0;
     const paras = body.split(/(\n\s*\n)/);
     paras.forEach((para, n) => {
@@ -1597,7 +1689,7 @@ The reply includes a "url" — share it with me.`;
         flush();
         if (/^H[1-6]$/.test(n.nodeName)) { const h = n.textContent.replace(/ /g, " ").replace(/\s+/g, " ").trim(); if (h) blocks.push("## " + h); }
         else if ([...n.children].some(c => BLOCK.test(c.nodeName))) walk(n);
-        else blocks.push(lineOf([...n.childNodes]));
+        else { const line = lineOf([...n.childNodes]); blocks.push(line && n.classList?.contains("point") ? "- " + line : line); }
       });
       flush();
     };
@@ -2023,6 +2115,7 @@ The reply includes a "url" — share it with me.`;
     const f = e.target.closest("#fonts [data-font]"); if (f) { S.font = f.dataset.font; save(); return applySettings(); }
     const w = e.target.closest(".w");
     if (w && !inlineEdit && menu.hidden && getSelection().isCollapsed) { // a drag to highlight isn't a jump, nor is opening the menu
+      if (points.length && S.mode === "voice") return goToPoint(pointAt(+w.dataset.i));
       const i = +w.dataset.i;
       cursor = i; lastSpoken = -1; resetSpoken();
       pos = Math.max(0, Math.min(maxPos, targetFor(i)));
@@ -2062,6 +2155,8 @@ The reply includes a "url" — share it with me.`;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key;
     if (k === " " || k === "k") { e.preventDefault(); toggle(); }
+    else if (points.length && S.mode === "voice" && /^Arrow(Up|Left)$/.test(k)) { e.preventDefault(); goToPoint(pointAt(cursor) - 1); }
+    else if (points.length && S.mode === "voice" && /^Arrow(Down|Right)$/.test(k)) { e.preventDefault(); goToPoint(pointAt(cursor) + 1); }
     else if (k === "ArrowUp") { e.preventDefault(); S.mode === "auto" ? setSpeed(S.speed + 1) : nudge(-1); }
     else if (k === "ArrowDown") { e.preventDefault(); S.mode === "auto" ? setSpeed(S.speed - 1) : nudge(1); }
     else if (k === "ArrowLeft") nudge(-1);

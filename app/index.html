@@ -65,8 +65,9 @@ button { cursor: pointer; }
 .dim-spoken .w.spoken { color: var(--dim); }
 .w.now { color: var(--accent); }
 /* Talking points: one point at a time, the next one waiting underneath */
-#text p.point { position: relative; padding-left: 1.05em; transition: opacity .35s; }
-#text p.point::before { content: "•"; position: absolute; left: 0; color: var(--accent); }
+/* No position: relative here: words measure their place from the text, and scrolling relies on it. */
+#text p.point { padding-left: 1.05em; text-indent: -1.05em; transition: opacity .35s; }
+#text p.point::before { content: "•"; display: inline-block; width: 1.05em; text-indent: 0; color: var(--accent); }
 #text p.point.done::before { content: "✓"; }
 body.points.voice #text p.point { opacity: .32; }
 body.points.voice #text p.point.next { opacity: .62; }

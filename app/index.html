@@ -793,7 +793,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $$(".w", textEl).forEach((el, i) => (words[i].el = el));
     points = $$("p.point", textEl).map(el => {
       const ws = $$(".w", el);
-      return ws.length ? { el, from: +ws[0].dataset.i, to: +ws[ws.length - 1].dataset.i, keys: keyWords(ws.map(w => words[+w.dataset.i].norm)) } : null;
+      return ws.length ? { el, from: +ws[0].dataset.i, to: +ws[ws.length - 1].dataset.i, keys: keyWords(ws.map(w => words[+w.dataset.i].norm), ws.map(w => w.textContent)) } : null;
     }).filter(Boolean);
     document.body.classList.toggle("points", points.length > 0);
     document.body.classList.toggle("has-script", words.length > 0);
@@ -1009,8 +1009,10 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   // ---------- Talking points ----------
   // The words that say what a point is about: not "the", "and", "really" and friends.
   const STOP = new Set("a an and are as at be been but by can could did do does dont for from get got had has have how i if im in into is it its ive just like make me more most my no not now of on one only or our out really say so some than that thats the their them then there these they thing things this those to too up us very was we were what when where which who why will with would you your youre about also because going gonna lot lots kind sort well yeah okay ok actually".split(" "));
-  function keyWords(norms) {
-    return [...new Set(norms.filter(n => (n.length >= 4 || /\d/.test(n)) && !STOP.has(n)))];
+  // Short words are noise, except acronyms like AI, MCP or WP, which are often the whole point.
+  function keyWords(norms, shown = []) {
+    const acronym = i => /^[A-Z]{2,}s?$/.test((shown[i] || "").replace(/[^\p{L}\p{N}]/gu, ""));
+    return [...new Set(norms.filter((n, i) => (n.length >= 4 || /\d/.test(n) || acronym(i)) && !STOP.has(n)))];
   }
   const pointAt = i => { let k = 0; points.forEach((pt, j) => { if (pt.from <= i) k = j; }); return k; };
   let pointHeardFrom = 0; // where in the transcript the current point began
@@ -1033,8 +1035,10 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     const k = pointAt(cursor), cur = points[k];
     const since = spoken.slice(pointHeardFrom), recent = spoken.slice(-12);
     // Started on a later point (or skipped one): move there.
+    // Once you've been on a point a while (or covered it), one key word from the next point is enough.
+    const settled = cur.covered || since.length >= 12;
     for (let j = k + 1; j < points.length; j++) {
-      const pt = points[j], need = Math.min(j === k + 1 ? 2 : 3, pt.keys.length); // jumping further takes more proof
+      const pt = points[j], need = Math.min(j === k + 1 ? (settled ? 1 : 2) : 3, pt.keys.length); // jumping further takes more proof
       if (need && hits(pt, recent) >= need && hits(pt, recent) > hits(cur, recent)) return goToPoint(j);
     }
     // Said enough about this one: tick it, and the next point brightens.

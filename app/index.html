@@ -136,6 +136,20 @@ body.points.dim-spoken .w.spoken { color: inherit; }
 #cam-wrap:hover .cam-btns { opacity: 1; }
 #cam-wrap .cam-btns button { width: 28px; height: 28px; border-radius: 8px; border: 0; background: rgba(0,0,0,.55); color: #fff; display: grid; place-items: center; }
 #cam-wrap .cam-btns svg { width: 15px; height: 15px; }
+/* Narration: the video sits above the script, and the reading line moves up to sit just under it. */
+#narr-wrap { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); width: min(880px, 92vw); height: 38vh; z-index: 20;
+  background: #000; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 10px 40px rgba(0,0,0,.45); }
+#narr-wrap video { width: 100%; height: 100%; object-fit: contain; display: block; }
+#narr-wrap .narr-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 10px; align-items: center; padding: 18px 10px 6px;
+  background: linear-gradient(transparent, rgba(0,0,0,.75)); color: #fff; font: 12px/1.3 Inter, system-ui, sans-serif; }
+#narr-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .85; }
+#narr-time { font-variant-numeric: tabular-nums; }
+#narr-wrap .narr-bar button { height: 26px; padding: 0 9px; border: 0; border-radius: 8px; background: rgba(255,255,255,.16); color: #fff; font: inherit; cursor: pointer; }
+body.narrating { --guide: 16%; --guide-vh: calc((100vh - 68px - 38vh) * .16); }
+body.narrating #stage { top: calc(68px + 38vh); }
+#drop-hint { position: fixed; inset: 12px; z-index: 95; border: 2px dashed var(--accent); border-radius: 20px; display: grid; place-items: center;
+  font-size: 22px; font-weight: 600; background: rgba(0,0,0,.65); color: #fff; opacity: 0; pointer-events: none; transition: opacity .2s; }
+body.dragging #drop-hint { opacity: 1; }
 /* #stage is its own stacking context, so the video goes underneath everything (and body's background steps aside). */
 body.cam-behind { background: transparent; }
 body.cam-behind #cam-wrap { inset: 0; width: auto; aspect-ratio: auto; border-radius: 0; border: 0; box-shadow: none; z-index: -1; }
@@ -460,6 +474,9 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
   <button class="btn round" data-act="edit" title="Edit the text (E)" aria-label="Edit the text">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>
   </button>
+  <button class="btn round hide-sm" id="narrate" data-act="narrate" title="Narrate over a video" aria-label="Narrate over a video">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="13" height="10" rx="2"/><path d="m7.5 7 3.5 2-3.5 2z" fill="currentColor"/><rect x="17" y="10" width="4" height="7" rx="2"/><path d="M15.5 15.5a3.5 3.5 0 0 0 7 0M19 19v2"/></svg>
+  </button>
   <button class="btn round" id="record" data-act="record" title="Record yourself (R)" aria-label="Record">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="m16 10.5 5-3v9l-5-3" stroke-linejoin="round"/><circle cx="9.5" cy="12" r="2.2" fill="#ff4d4d" stroke="none"/></svg>
   </button>
@@ -501,6 +518,12 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
     <button data-act="cam-off" title="Turn camera off" aria-label="Turn camera off"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
 </div>
+<div id="narr-wrap" hidden>
+  <video id="narr-video" muted playsinline preload="auto"></video>
+  <div class="narr-bar"><span id="narr-name"></span><span id="narr-time">0:00</span><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
+</div>
+<input type="file" id="narr-file" accept="video/*" hidden>
+<div id="drop-hint">Drop a video to narrate over it</div>
 <div id="rec-pill" hidden><i></i><span>0:00</span><button data-act="flub" title="Mark a flub (X)">Flub</button></div>
 
 <div id="scrim"></div>
@@ -658,6 +681,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
 <script>
 (() => {
   let pipWin = null; // the floating window, while the stage is living in it
+  let narr = null; // { name, url } while a video is loaded for narration
   const $ = (s, el) => (el ? el.querySelector(s) : document.querySelector(s) || pipWin?.document.querySelector(s));
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const store = {
@@ -833,7 +857,8 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     wordsPerPx = words.length && textH > 0 ? words.length / textH : 0;
   }
   const textSize = () => (pipWin ? S[pipSizeKey()] ?? pipSizeDefault() : S.size);
-  const guideY = () => scroller.clientHeight * (pipWin ? pipGuide() : S.guide) / 100;
+  const NARR_GUIDE = 16; // matches body.narrating's --guide
+  const guideY = () => scroller.clientHeight * (pipWin ? pipGuide() : narr ? NARR_GUIDE : S.guide) / 100;
   const pxPerSec = () => S.speed * textSize() * 0.075;
   function updateWpm() {
     const wpm = Math.round(pxPerSec() * 60 * wordsPerPx);
@@ -1148,6 +1173,60 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   // ---------- Camera & recording ----------
   // Takes live in memory (as Blobs) until downloaded; leaving the page with unsaved takes asks first.
   let camStream = null, recorder = null, recChunks = [], recStart = 0, recTimer = null, recCountdown = null;
+  // Narration: a video from your own disk plays muted above the script while only your voice is recorded.
+  let micStream = null, narrStartMs = 0;
+  const narrVideo = $("#narr-video");
+  function loadNarration(file) {
+    if (!file || !/^video\//.test(file.type)) return toast("That isn't a video file.", null, 3000);
+    if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
+    if (narr) URL.revokeObjectURL(narr.url);
+    if (camStream) stopCam();
+    narr = { name: file.name, url: URL.createObjectURL(file) };
+    narrVideo.src = narr.url; narrVideo.currentTime = 0;
+    $("#narr-name").textContent = file.name; $("#narr-wrap").hidden = false;
+    document.body.classList.add("narrating");
+    $("#record").title = "Record narration (R)";
+    requestAnimationFrame(() => { measure(); placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
+    toast("Press Record to narrate. The video plays muted and only your voice is recorded.", null, 5000);
+  }
+  function closeNarration() {
+    if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
+    narrVideo.pause(); narrVideo.removeAttribute("src"); narrVideo.load();
+    narr = null; $("#narr-wrap").hidden = true; document.body.classList.remove("narrating");
+    $("#record").title = "Record yourself (R)";
+    requestAnimationFrame(() => { measure(); placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
+  }
+  $("#narr-file").addEventListener("change", e => { loadNarration(e.target.files[0]); e.target.value = ""; });
+  narrVideo.addEventListener("timeupdate", () => ($("#narr-time").textContent = clock(narrVideo.currentTime * 1000) + (narrVideo.duration ? " / " + clock(narrVideo.duration * 1000) : "")));
+  narrVideo.addEventListener("loadedmetadata", () => narrVideo.dispatchEvent(new Event("timeupdate")));
+  let narrEndTimer = null;
+  narrVideo.addEventListener("ended", () => { if (recorder && !narrEndTimer) narrEndTimer = setTimeout(() => { narrEndTimer = null; if (recorder) stopRec(); }, 600); }); // a beat of silence after the last frame
+  let dragDepth = 0;
+  const hasFile = e => [...(e.dataTransfer?.types || [])].includes("Files");
+  document.addEventListener("dragenter", e => { if (!hasFile(e)) return; dragDepth++; document.body.classList.add("dragging"); });
+  document.addEventListener("dragleave", e => { if (!hasFile(e)) return; if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragging"); } });
+  document.addEventListener("dragover", e => { if (hasFile(e)) e.preventDefault(); });
+  document.addEventListener("drop", e => {
+    if (!hasFile(e)) return;
+    e.preventDefault(); dragDepth = 0; document.body.classList.remove("dragging");
+    if (inlineEdit) return;
+    loadNarration([...e.dataTransfer.files].find(f => f.type.startsWith("video/")) || e.dataTransfer.files[0]);
+  });
+  const audioMime = () => ["audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/webm;codecs=opus", "audio/webm"]
+    .find(m => window.MediaRecorder?.isTypeSupported?.(m)) || "";
+  async function startMic() {
+    if (micStream) return true;
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { toast("This browser can't record audio. Try Chrome, Edge or Safari.", null, 4500); return false; }
+    try {
+      // Echo cancellation and noise suppression would colour a voiceover, so they're off.
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: S.mic ? { exact: S.mic } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      return true;
+    } catch (e) {
+      toast(e.name === "NotAllowedError" ? "Microphone blocked. Click the icon in the address bar to allow it." : "Couldn't start the microphone: " + e.message, null, 6000);
+      return false;
+    }
+  }
+  function stopMic() { micStream?.getTracks().forEach(t => t.stop()); micStream = null; }
   const takes = [];
   const CAM_VIEWS = ["corner", "behind", "hidden"];
   const recMime = () => ["video/mp4;codecs=avc1.640028,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm"]
@@ -1185,20 +1264,32 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   async function startRec() {
     if (recorder || recCountdown) return;
     if (takesDir && !(await folderReady())) toast("No access to your takes folder, so takes will download instead.", null, 4000);
-    if (!(await startCam())) return;
+    if (narr ? !(await startMic()) : !(await startCam())) return;
     if (playing) pause();
     const begin = () => {
       recCountdown = null;
+      if (narr) {
+        // From the top unless you've moved the video on; the start point is saved so an editor can line the voice up.
+        if (narrVideo.ended || narrVideo.currentTime >= (narrVideo.duration || Infinity) - 0.5) narrVideo.currentTime = 0;
+        narrStartMs = Math.round(narrVideo.currentTime * 1000);
+        try { recorder = new MediaRecorder(micStream, { mimeType: audioMime(), audioBitsPerSecond: 192_000 }); }
+        catch { recorder = new MediaRecorder(micStream); }
+        narrVideo.play().catch(() => {});
+      } else {
       const mimeType = recMime();
       try { recorder = new MediaRecorder(camStream, { mimeType, videoBitsPerSecond: 8_000_000 }); }
       catch { recorder = new MediaRecorder(camStream); }
+      }
       recChunks = [];
       recorder.ondataavailable = e => e.data.size && recChunks.push(e.data);
       recorder.onstop = saveTake;
       recorder.start(1000);
       recStart = Date.now();
       $("#rec-pill").hidden = false; $("#record").classList.add("on"); $("#record").title = "Stop recording (R)";
-      recTimer = setInterval(() => ($("#rec-pill span").textContent = clock(Date.now() - recStart)), 250);
+      recTimer = setInterval(() => {
+        $("#rec-pill span").textContent = clock(Date.now() - recStart);
+        if (narr && narrVideo.ended && !narrEndTimer) narrEndTimer = setTimeout(() => { narrEndTimer = null; if (recorder) stopRec(); }, 600); // backup if "ended" was missed
+      }, 250);
       if (words.length) play({ now: true });
       startLog();
     };
@@ -1219,7 +1310,8 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     if (playing) pause();
     recorder.stop(); recorder = null; clearInterval(logTimer);
     clearInterval(recTimer); $("#rec-pill").hidden = true;
-    $("#record").classList.remove("on"); $("#record").title = "Record yourself (R)";
+    if (narr) narrVideo.pause();
+    $("#record").classList.remove("on"); $("#record").title = narr ? "Record narration (R)" : "Record yourself (R)";
   }
   // Remembers the takes folder between visits (a directory handle can't go in localStorage).
   const idb = (mode, fn) => new Promise((res, rej) => {
@@ -1282,23 +1374,37 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   const stamp = d => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}${p2(d.getMinutes())}`;
   async function saveTake() {
     clearInterval(logTimer);
-    const type = (recChunks[0]?.type || recMime() || "video/webm").split(";")[0];
+    const audioOnly = /^audio\//.test(recChunks[0]?.type || "") || (!!narr && !camStream);
+    const type = (recChunks[0]?.type || (audioOnly ? audioMime() : recMime()) || "video/webm").split(";")[0];
     const blob = new Blob(recChunks, { type });
-    const title = current?.title || "Take", n = takes.length + 1, ext = type.includes("mp4") ? "mp4" : "webm";
+    const title = current?.title || "Take", n = takes.length + 1;
+    const ext = audioOnly ? (type.includes("mp4") ? "m4a" : "webm") : type.includes("mp4") ? "mp4" : "webm";
     const t = {
       id: Date.now(), n, title, dur: Date.now() - recStart, blob, url: URL.createObjectURL(blob), ext,
-      filename: `${title.replace(/[\\/:*?"<>|]+/g, "").slice(0, 60)} - take ${n} - ${stamp(new Date(recStart))}.${ext}`,
+      filename: `${title.replace(/[\\/:*?"<>|]+/g, "").slice(0, 60)} - ${audioOnly ? "narration" : "take"} ${n} - ${stamp(new Date(recStart))}.${ext}`,
       flubs, words: timeline, scriptId: current && !current.local ? current.id : null, saved: false, kept: false, remoteId: null, inFolder: false,
+      narration: audioOnly && narr ? { video: narr.name, videoUrl: narr.url, startMs: narrStartMs } : null,
     };
+    if (t.narration) stopMic();
     takes.push(t); renderTakes();
     if (takesDir) {
       try {
         const fh = await takesDir.getFileHandle(t.filename, { create: true });
         const w = await fh.createWritable(); await w.write(blob); await w.close();
+        if (t.narration) await writeNotes(t).catch(() => {});
         t.saved = t.inFolder = true; renderTakes(); report(t);
       } catch (e) { toast("Couldn't save to your takes folder: " + e.message, null, 5000); }
     }
     openReview(t);
+  }
+  // Beside each narration: which video it belongs to, where in it the voice starts, and the flubs.
+  async function writeNotes(t) {
+    const fh = await takesDir.getFileHandle(t.filename.replace(/\.[^.]+$/, "") + ".json", { create: true });
+    const w = await fh.createWritable();
+    await w.write(JSON.stringify({ audio: t.filename, video: t.narration.video, video_start_ms: t.narration.startMs, duration_ms: t.dur,
+      note: "Audio-only narration recorded while the video played muted. Place the audio at video_start_ms in the video. Flub and word times are from the start of the audio.",
+      flubs: t.flubs, words: t.words }, null, 2));
+    await w.close();
   }
   // Tell the inbox about a take once the file exists somewhere an editing agent can find it.
   function report(t) {
@@ -1307,6 +1413,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       const r = await fetch("/api/takes", { method: "POST", headers: { authorization: "Bearer " + key, "content-type": "application/json" }, body: JSON.stringify({
         script_id: t.scriptId, title: t.title, n: t.n, filename: t.filename, folder: t.inFolder ? takesDir.name : null,
         duration_ms: t.dur, size: t.blob.size, kept: t.kept, flubs: t.flubs, words: t.words,
+        narration: t.narration && { video: t.narration.video, start_ms: t.narration.startMs },
       }) });
       if (r.ok) t.remoteId = (await r.json()).id;
     } catch {} })());
@@ -1331,17 +1438,35 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   }
 
   let reviewing = null;
+  const reviewAudio = new Audio();
+  // A narration plays back as the original video (muted) with the recorded voice kept in step with it.
+  const rv = $("#review-video");
+  const narrSync = () => {
+    const t = reviewing?.narration; if (!t) return;
+    const at = rv.currentTime - t.startMs / 1000;
+    if (at < 0 || at > reviewAudio.duration) { reviewAudio.pause(); return; }
+    if (Math.abs(reviewAudio.currentTime - at) > 0.15) reviewAudio.currentTime = at;
+    if (!rv.paused && reviewAudio.paused) reviewAudio.play().catch(() => {});
+  };
+  rv.addEventListener("play", narrSync); rv.addEventListener("seeked", narrSync); rv.addEventListener("timeupdate", narrSync);
+  rv.addEventListener("pause", () => reviewAudio.pause());
   function openReview(t) {
     reviewing = t;
-    const v = $("#review-video"); v.src = t.url; v.currentTime = 0; v.play().catch(() => {});
-    $("#rv-title").textContent = `Take ${t.n} · ${t.title}`;
+    const v = rv;
+    if (t.narration) {
+      reviewAudio.src = t.url; v.muted = true; v.src = t.narration.videoUrl; v.currentTime = t.narration.startMs / 1000;
+    } else { reviewAudio.removeAttribute("src"); v.muted = false; v.src = t.url; v.currentTime = 0; }
+    v.play().catch(() => {});
+    $("#rv-title").textContent = `${t.narration ? "Narration" : "Take"} ${t.n} · ${t.title}`;
     $("#rv-meta").textContent = `${clock(t.dur)}${t.flubs.length ? ` · ${t.flubs.length} flub${t.flubs.length > 1 ? "s" : ""} marked` : ""}`;
-    $("#rv-flubs").innerHTML = t.flubs.map((f, i) => `<button data-seek="${Math.max(0, f.ms / 1000 - 3)}" title="Jump to just before it">⚑ ${clock(f.ms)}</button>`).join("");
-    $("#rv-where").textContent = (t.inFolder ? `Saved in your “${takesDir.name}” folder as ${t.filename}.` : `Keep downloads it as ${t.filename}.`)
+    const off = t.narration ? t.narration.startMs / 1000 : 0;
+    $("#rv-flubs").innerHTML = t.flubs.map((f, i) => `<button data-seek="${Math.max(0, off + f.ms / 1000 - 3)}" title="Jump to just before it">⚑ ${clock(f.ms)}</button>`).join("");
+    $("#rv-where").textContent = (t.inFolder ? `Saved in your “${takesDir.name}” folder as ${t.filename}${t.narration ? ", with a notes file saying where it starts in the video" : ""}.` : `Keep downloads it as ${t.filename}.`)
+      + (t.narration ? ` It's your voice only, starting at ${clock(t.narration.startMs)} in ${t.narration.video}.` : "")
       + (key ? " Your AI can find it with the get_take tool." : "");
     $("#review").classList.add("open"); wake();
   }
-  function closeReview() { $("#review-video").pause(); $("#review").classList.remove("open"); reviewing = null; }
+  function closeReview() { rv.pause(); reviewAudio.pause(); $("#review").classList.remove("open"); reviewing = null; }
   $("#rv-flubs").addEventListener("click", e => { const b = e.target.closest("[data-seek]"); if (b) { const v = $("#review-video"); v.currentTime = +b.dataset.seek; v.play().catch(() => {}); } });
   $("#review").addEventListener("click", e => { if (e.target.id === "review") closeReview(); });
 
@@ -1349,7 +1474,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#takes-box").hidden = !takes.length;
     $("#takes").innerHTML = takes.map(t => `<div class="take${t.saved ? " saved" : ""}" data-take="${t.id}">
       <button class="star${t.kept ? " on" : ""}" data-take-star title="${t.kept ? "Keeper" : "Mark as a keeper"}">${t.kept ? "★" : "☆"}</button>
-      <span class="tt">Take ${t.n} · ${esc(t.title)}<small>${clock(t.dur)}${t.flubs.length ? ` · ${t.flubs.length} ⚑` : ""}</small></span>
+      <span class="tt">${t.narration ? "Narration" : "Take"} ${t.n} · ${esc(t.title)}<small>${clock(t.dur)}${t.flubs.length ? ` · ${t.flubs.length} ⚑` : ""}</small></span>
       <button data-take-play>Review</button><button class="dl" data-take-dl>${t.inFolder ? "In folder ✓" : t.saved ? "Saved ✓" : "Download"}</button><button data-take-del aria-label="Delete take">✕</button></div>`).join("");
   }
   $("#takes").addEventListener("click", e => {
@@ -2068,6 +2193,9 @@ The reply includes a "url" — share it with me.`;
       markSaved();
     },
     record: () => (recorder || recCountdown ? stopRec() : startRec()),
+    narrate: () => $("#narr-file").click(),
+    "narr-pick": () => $("#narr-file").click(),
+    "narr-close": closeNarration,
     flub: markFlub,
     popout: popOut,
     "pip-mode": () => { setMode(S.mode === "voice" ? "auto" : "voice"); setPlayUi(); pipDiag(); },

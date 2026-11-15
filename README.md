@@ -29,6 +29,10 @@ Video never goes to the server (Spacefast app storage is capped at 5 MiB a file)
 
 Send a list with one `- ` line per point instead of a script, and Prompter treats it as talking points. In voice mode it shows one point at a time, ticks it off when it hears you cover it, and moves on when you start talking about the next one. Arrow keys or a click move between points by hand.
 
+## Narration
+
+Drop a video onto Prompter (or press the narrate button) to record a voiceover for it. The video plays muted above the script while only your voice is recorded, with voice following, talking points and flub markers working as usual. You review it as the video with your new voice over it. The audio saves to your takes folder with a `.json` notes file saying which video it belongs to and where in it the voice starts, and your AI gets the same details through `get_take`. The video never leaves your computer.
+
 ## Remix it
 
 Get your own copy running on Spacefast in one click, with its own database and inboxes:

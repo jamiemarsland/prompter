@@ -3,6 +3,7 @@
 export interface TakeDetail {
   flubs?: { ms: number; near?: string }[];
   words?: [number, string][]; // [ms from start, word] as the prompter followed the script
+  narration?: { video: string; start_ms: number }; // an audio-only voiceover recorded over this video
 }
 
 const MAX_DETAIL = 400_000;
@@ -13,8 +14,9 @@ export function cleanTake(o: any) {
   const flubs = (Array.isArray(o?.flubs) ? o.flubs : []).slice(0, 200).map((f: any) => ({ ms: num(f?.ms), near: str(f?.near, 120) || undefined }));
   const words = (Array.isArray(o?.words) ? o.words : []).slice(0, 20000)
     .filter((w: any) => Array.isArray(w)).map((w: any) => [num(w[0]), str(w[1], 40)] as [number, string]);
-  let detail = JSON.stringify({ flubs, words });
-  if (detail.length > MAX_DETAIL) detail = JSON.stringify({ flubs, words: [] });
+  const narration = o?.narration && typeof o.narration === "object" ? { video: str(o.narration.video, 255), start_ms: num(o.narration.start_ms) } : undefined;
+  let detail = JSON.stringify({ flubs, words, narration });
+  if (detail.length > MAX_DETAIL) detail = JSON.stringify({ flubs, words: [], narration });
   return {
     script_id: str(o?.script_id, 40) || null,
     title: str(o?.title, 120) || "Take",
@@ -43,6 +45,7 @@ export function describeTake(t: any, full: boolean) {
   const lines = [
     `${t.id} · ${t.title} · take ${t.n}${Number(t.kept) ? " · ★ keeper" : ""} · ${clock(Number(t.duration_ms))} · ${new Date(Number(t.created_at)).toISOString().slice(0, 16).replace("T", " ")} UTC`,
     `File: "${t.filename}" ${where}${t.size ? `, ${(Number(t.size) / 1e6).toFixed(1)} MB` : ""}.`,
+    d.narration ? `Narration: an audio-only voiceover recorded while the video "${d.narration.video}" played muted. It starts at ${clock(d.narration.start_ms)} into that video, so place the audio there. The video is the user's own file, probably in the same folder or where they keep their recordings. Flub and word times below are from the start of the audio. A notes file with the same name ending .json sits beside the audio when it was saved to a folder.` : "",
     t.script_id ? `Script id: ${t.script_id}` : "",
     flubs.length ? `Flubs marked: ${flubs.length}` : "No flubs marked.",
   ].filter(Boolean);

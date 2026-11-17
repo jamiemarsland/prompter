@@ -424,6 +424,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
   position: fixed; top: 16px; left: 50%; transform: translate(-50%, -140%); z-index: 90; display: flex; align-items: center; gap: 12px;
   padding: 10px 10px 10px 16px; border-radius: 16px; font-size: 14px; transition: transform .45s cubic-bezier(.2,.9,.2,1.1); max-width: calc(100vw - 24px);
 }
+#toast button { white-space: nowrap; flex: none; }
 #toast.show { transform: translate(-50%, 0); }
 #toast .msg { line-height: 1.45; max-width: 560px; }
 #toast .msg b { font-weight: 600; }
@@ -922,7 +923,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     if (narr) closeNarration();
     current = null; render("");
     $("#title-pill").textContent = ""; document.title = "Prompter";
-    history.replaceState(null, "", location.pathname); store.set("last", null);
+    history.replaceState(null, "", location.pathname); store.set("last", "home");
     renderList();
   }
   function load(script, { keepPlace = false } = {}) {
@@ -1417,7 +1418,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     if (el !== paceEl) { paceEl?.classList.remove("pace"); el?.classList.add("pace"); paceEl = el; }
   }
   // A link has to point straight at a video file the browser can play without signing in.
-  function loadNarrationUrl(url, { fromScript = false } = {}) {
+  function loadNarrationUrl(url, { fromScript = false, quiet = false } = {}) {
     if (!/^https?:\/\/\S+$/i.test(url || "")) return toast("That doesn't look like a link. It should start with https://", null, 4000);
     if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
     if (narr && !narr.remote) URL.revokeObjectURL(narr.url);
@@ -1431,7 +1432,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#record").title = "Record your voiceover (R)";
     applyNarrSound(); showBackButton(); showAutoButton(); narrSec = 0; syncSections();
     requestAnimationFrame(() => { measure(); if (timed()) goToSection(0); else placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
-    if (!fromScript && words.length) toast(timed() ? `This script is timed to the video. Record counts you in and runs to the end.` : "Press Record to narrate. Only your voice is recorded.", null, 5000);
+    if (!fromScript && !quiet && words.length) toast(timed() ? `This script is timed to the video. Record counts you in and runs to the end.` : "Press Record to narrate. Only your voice is recorded.", null, 5000);
   }
   narrVideo.addEventListener("error", () => {
     if (!narr?.remote) return;
@@ -1448,11 +1449,11 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   // Writes (or replaces) the script's [video: …] line, so the link comes back next time and on other devices.
   async function rememberVideo(url) {
     if (!current) return;
-    const text = (current.body || "").replace(/\r\n?/g, "\n").split(/\n\s*\n/).filter(p => !VIDEO_CUE.test(p.trim())).join("\n\n").trim() + `\n\n[video: ${url}]`;
-    try { await saveBody(current, text); } catch (e) { return toast("Couldn't save the link with the script: " + e.message, null, 5000); }
-    current = { ...current, body: text }; if (narr) narr.fromScript = true;
+    const before = current, text = (current.body || "").replace(/\r\n?/g, "\n").split(/\n\s*\n/).filter(p => !VIDEO_CUE.test(p.trim())).join("\n\n").trim() + `\n\n[video: ${url}]`;
+    try { await saveBody(current, text); } catch (e) { return toast("Couldn't save the video with the script: " + e.message, null, 5000); }
+    current = { ...current, body: text }; if (narr) { narr.fromScript = true; delete narr.chosenFor; } // the script's own video now, so Undo brings the old one back
     showBody(current); sync();
-    toast(`“${current.title}” will open with this video from now on.`, null, 3500);
+    toast("Video saved with this script.", () => undoUpdate(before, current), 6000, "Undo");
   }
   function pasteVideoLink() {
     $("#narr-menu").hidden = false; $("#narr-link-form").hidden = false;
@@ -1473,14 +1474,10 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
         else if (o.error) return toast(o.error, null, 7000);
       } catch {}
     }
-    loadNarrationUrl(url);
+    loadNarrationUrl(url, { quiet: !!(current && words.length && scriptVideo !== url) }); // the "saved with this script" note says enough
     if (narr) narr.chosenFor = current?.id ?? null; // you picked this one: don't swap it for the script's own video
-    // Remember the link with the open script: straight away if it had no video, or on a yes if it's replacing one.
-    if (narr?.remote && current && words.length) {
-      const had = scriptVideo;
-      if (!had) setTimeout(() => { if (narr?.url === url) rememberVideo(url); }, 800);
-      else if (had !== url) setTimeout(() => { if (narr?.url === url) toast(`Use this video for “${current.title}” from now on?`, () => rememberVideo(url), 10000, "Use it"); }, 1500);
-    }
+    // The open script now goes with this video (Undo puts the old one back).
+    if (narr?.remote && current && words.length && scriptVideo !== url) setTimeout(() => { if (narr?.url === url) rememberVideo(url); }, 600);
   });
   $("#narr-link-input").addEventListener("keydown", e => { if (e.key === "Escape") { $("#narr-link-form").hidden = true; $("#narr-menu").hidden = true; } });
   function closeNarration() {
@@ -2814,7 +2811,8 @@ The reply includes a "url" — share it with me.`;
   (async () => {
     await sync();
     const want = location.hash.slice(1) || store.get("last", null);
-    if (want) await open(want).catch(() => {});
+    if (want === "home") {} // you went back to the start screen: stay there
+    else if (want) await open(want).catch(() => {});
     else if (remote[0]) await open(remote[0].id);
     else if (local()[0]) load(local()[0]);
     if (!key || params.has("new") || params.has("restore")) setTimeout(() => openDrawer("library"), 400);

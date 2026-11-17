@@ -153,6 +153,14 @@ body.narrating #stage { top: calc(68px + 38vh); }
 body.timed #text p[data-sec] { opacity: .45; transition: opacity .25s; }
 body.timed #text p.sec-current { opacity: 1; }
 .w.pace { box-shadow: 0 .1em 0 var(--accent); }
+/* Pace marks and the script's video link steer narration but aren't read, so they only show while editing. */
+.cue.tmark, #text p.vline { display: none; }
+#text.editing .cue.tmark { display: inline; }
+#text.editing p.vline { display: block; }
+#narr-menu { position: fixed; z-index: 95; left: 50%; bottom: 96px; transform: translateX(-50%); min-width: 250px; padding: 6px; border-radius: 14px; display: flex; flex-direction: column; background: var(--ui-solid); }
+#narr-menu button { display: flex; align-items: center; justify-content: space-between; gap: 18px; height: 36px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; font-size: 13.5px; text-align: left; }
+#narr-menu button:hover, #narr-menu button:focus-visible { background: rgba(255,255,255,.1); outline: none; }
+#narr-menu button small { color: var(--ui-mute); font-size: 12px; }
 #drop-hint { position: fixed; inset: 12px; z-index: 95; border: 2px dashed var(--accent); border-radius: 20px; display: grid; place-items: center;
   font-size: 22px; font-weight: 600; background: rgba(0,0,0,.65); color: #fff; opacity: 0; pointer-events: none; transition: opacity .2s; }
 body.dragging #drop-hint { opacity: 1; }
@@ -529,6 +537,10 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
   <div class="narr-bar"><span id="narr-name"></span><span id="narr-sec" hidden><button data-act="sec-prev" title="Previous section ([)" aria-label="Previous section">‹</button><b id="narr-sec-label"></b><button data-act="sec-next" title="Next section (])" aria-label="Next section">›</button><button data-act="sec-roll" id="narr-roll" title="Stop at the end of each section, or keep recording into the next ones"></button></span><span id="narr-time">0:00</span><button data-act="narr-sound" id="narr-sound" title="Hear the video's own sound while you record (wear headphones)">Sound off</button><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
 </div>
 <input type="file" id="narr-file" accept="video/*" hidden>
+<div id="narr-menu" class="glass" role="menu" hidden>
+  <button role="menuitem" data-act="narr-file">Choose a video file <small>stays on this computer</small></button>
+  <button role="menuitem" data-act="narr-link">Paste a video link <small>.mp4 or similar</small></button>
+</div>
 <div id="drop-hint">Drop a video to narrate over it</div>
 <div id="rec-pill" hidden><i></i><span>0:00</span><button data-act="flub" title="Mark a flub (X)">Flub</button></div>
 
@@ -787,8 +799,11 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   const tsec = (m, sec) => +m * 60 + +sec;
   let sections = []; // { el, from, to, start, end, pace } in seconds of video time
   let narrSec = 0, secRun = null, narrTakeSec = null, paceEl = null, paceIdx = null;
+  // A script can carry the video it narrates, as a paragraph on its own: [video: https://example.com/film.mp4]
+  const VIDEO_CUE = /^\[video:\s*(https?:\/\/[^\s\]]+)\s*\]$/i;
+  let scriptVideo = null;
   function render(body, { animate = true } = {}) {
-    words = [];
+    words = []; scriptVideo = null;
     const html = [], secs = [];
     const asPoints = isPoints(body);
     body = body.replace(/\r\n?/g, "\n");
@@ -801,6 +816,8 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       const isPoint = asPoints && p.startsWith("\u2063");
       p = p.replace(/^\u2063/, "");
       if (/^#{1,6}\s/.test(p)) { html.push(`<h2>${esc(p.replace(/^#+\s*/, "").replace(/\*+/g, ""))}</h2>`); continue; }
+      const vm = p.match(VIDEO_CUE);
+      if (vm) { scriptVideo ||= vm[1]; html.push(`<p class="vline"><span class="cue">${esc(p)}</span></p>`); continue; }
       const sm = asPoints ? null : p.match(SEC_CUE);
       const sec = sm ? { start: tsec(sm[1], sm[2]), end: sm[3] != null ? tsec(sm[3], sm[4]) : null, from: words.length, marks: [] } : null;
       let out = "", inBold = false;
@@ -811,7 +828,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
           if (part === "//") { out += `<span class="pause" title="Breath"></span> `; continue; }
           if (part.startsWith("[") && part.endsWith("]")) {
             const pm = sec && words.length > sec.from && part.match(PACE_CUE);
-            if (pm) { sec.marks.push([words.length, tsec(pm[1], pm[2])]); continue; } // pace marks steer the timing but aren't shown
+            if (pm) { sec.marks.push([words.length, tsec(pm[1], pm[2])]); out += `<span class="cue tmark">${esc(part)}</span> `; continue; }
             out += `<span class="cue">${esc(part)}</span> `; continue;
           }
           for (const tok of part.split(/\s+/)) {
@@ -848,7 +865,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       if (sc.end != null) pts.push([sc.to + 1, sc.end]);
       sc.pace = pts.length > 1 ? pts : null;
     });
-    syncSections();
+    syncSections(); syncScriptVideo();
     document.body.classList.toggle("points", points.length > 0);
     document.body.classList.toggle("has-script", words.length > 0);
     cursor = 0; pos = 0; scroller.scrollTop = 0;
@@ -1214,7 +1231,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   function loadNarration(file) {
     if (!file || !/^video\//.test(file.type)) return toast("That isn't a video file.", null, 3000);
     if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
-    if (narr) URL.revokeObjectURL(narr.url);
+    if (narr && !narr.remote) URL.revokeObjectURL(narr.url);
     if (camStream) stopCam();
     narr = { name: file.name, url: URL.createObjectURL(file) };
     narrVideo.src = narr.url; narrVideo.currentTime = 0;
@@ -1278,9 +1295,53 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     const el = i == null ? null : words[i]?.el;
     if (el !== paceEl) { paceEl?.classList.remove("pace"); el?.classList.add("pace"); paceEl = el; }
   }
+  // A link has to point straight at a video file the browser can play without signing in.
+  function loadNarrationUrl(url, { fromScript = false } = {}) {
+    if (!/^https?:\/\/\S+$/i.test(url || "")) return toast("That doesn't look like a link. It should start with https://", null, 4000);
+    if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
+    if (narr && !narr.remote) URL.revokeObjectURL(narr.url);
+    if (camStream) stopCam();
+    let name = "video";
+    try { name = decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).pop() || new URL(url).hostname); } catch {}
+    narr = { name, url, remote: true, fromScript };
+    narrVideo.src = url; narrVideo.currentTime = 0;
+    $("#narr-name").textContent = name; $("#narr-wrap").hidden = false;
+    document.body.classList.add("narrating");
+    $("#record").title = "Record narration (R)";
+    applyNarrSound(); narrSec = 0; syncSections();
+    requestAnimationFrame(() => { measure(); if (timed()) goToSection(0); else placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
+    if (!fromScript) toast(timed() ? `This script has ${sections.length} timed sections. Record does one at a time, with a count-in.` : "Press Record to narrate. Only your voice is recorded.", null, 5000);
+  }
+  narrVideo.addEventListener("error", () => {
+    if (!narr?.remote) return;
+    narr = null; $("#narr-wrap").hidden = true; document.body.classList.remove("narrating"); syncSections();
+    toast("Couldn't play that link. It has to point straight at a video file (ending in .mp4, say) and open without signing in. A YouTube page won't work.", null, 8000);
+  });
+  // Opening a script that names its video loads it; a file you chose yourself is never replaced.
+  function syncScriptVideo() {
+    if (recorder || recCountdown) return;
+    if (scriptVideo) { if (!narr || (narr.remote && narr.url !== scriptVideo)) loadNarrationUrl(scriptVideo, { fromScript: true }); }
+    else if (narr?.fromScript) closeNarration();
+  }
+  // Writes (or replaces) the script's [video: …] line, so the link comes back next time and on other devices.
+  async function rememberVideo(url) {
+    if (!current) return;
+    const text = (current.body || "").replace(/\r\n?/g, "\n").split(/\n\s*\n/).filter(p => !VIDEO_CUE.test(p.trim())).join("\n\n").trim() + `\n\n[video: ${url}]`;
+    try { await saveBody(current, text); } catch (e) { return toast("Couldn't save the link with the script: " + e.message, null, 5000); }
+    current = { ...current, body: text }; if (narr) narr.fromScript = true;
+    showBody(current); sync();
+    toast("Saved. This script now opens with its video.", null, 3500);
+  }
+  function pasteVideoLink() {
+    const url = (prompt("Paste a link to a video file (one ending in .mp4, for example). It has to open without signing in.") || "").trim();
+    if (!url) return;
+    loadNarrationUrl(url);
+    if (narr?.remote && current && words.length) setTimeout(() => { if (narr?.url === url) toast("Keep this video with the script?", () => rememberVideo(url), 12000, "Keep it"); }, 5200);
+  }
   function closeNarration() {
     if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
-    narrVideo.pause(); narrVideo.removeAttribute("src"); narrVideo.load();
+    narrVideo.pause(); const was = narr; narr = null; narrVideo.removeAttribute("src"); narrVideo.load();
+    if (was && !was.remote) URL.revokeObjectURL(was.url);
     narr = null; $("#narr-wrap").hidden = true; document.body.classList.remove("narrating"); syncSections();
     $("#record").title = "Record yourself (R)";
     requestAnimationFrame(() => { measure(); placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
@@ -1486,7 +1547,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       id: Date.now(), n, title, dur: Date.now() - recStart, blob, url: URL.createObjectURL(blob), ext,
       filename: `${title.replace(/[\\/:*?"<>|]+/g, "").slice(0, 60)} - ${audioOnly ? "narration" : "take"} ${n}${secOf ? ` - section ${p2(secOf.n)}` : ""} - ${stamp(new Date(recStart))}.${ext}`,
       flubs, words: timeline, scriptId: current && !current.local ? current.id : null, saved: false, kept: false, remoteId: null, inFolder: false,
-      narration: audioOnly && narr ? { video: narr.name, videoUrl: narr.url, startMs: narrStartMs, section: secOf } : null,
+      narration: audioOnly && narr ? { video: narr.name, videoUrl: narr.url, link: narr.remote ? narr.url : null, startMs: narrStartMs, section: secOf } : null,
     };
     if (t.narration) stopMic();
     takes.push(t); renderTakes();
@@ -1506,6 +1567,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     const w = await fh.createWritable();
     const sc = t.narration.section;
     await w.write(JSON.stringify({ audio: t.filename, video: t.narration.video, video_start_ms: t.narration.startMs, duration_ms: t.dur,
+      ...(t.narration.link ? { video_url: t.narration.link } : {}),
       ...(sc ? { section: sc.n, sections: sc.of, section_cue_ms: sc.cueMs } : {}),
       note: "Audio-only narration recorded while the video played muted. Place the audio at video_start_ms in the video. Flub and word times are from the start of the audio.",
       flubs: t.flubs, words: t.words }, null, 2));
@@ -1518,7 +1580,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       const r = await fetch("/api/takes", { method: "POST", headers: { authorization: "Bearer " + key, "content-type": "application/json" }, body: JSON.stringify({
         script_id: t.scriptId, title: t.title, n: t.n, filename: t.filename, folder: t.inFolder ? takesDir.name : null,
         duration_ms: t.dur, size: t.blob.size, kept: t.kept, flubs: t.flubs, words: t.words,
-        narration: t.narration && { video: t.narration.video, start_ms: t.narration.startMs, section: t.narration.section?.n, sections: t.narration.section?.of, section_cue_ms: t.narration.section?.cueMs },
+        narration: t.narration && { video: t.narration.video, video_url: t.narration.link || undefined, start_ms: t.narration.startMs, section: t.narration.section?.n, sections: t.narration.section?.of, section_cue_ms: t.narration.section?.cueMs },
       }) });
       if (r.ok) t.remoteId = (await r.json()).id;
     } catch {} })());
@@ -2300,8 +2362,10 @@ The reply includes a "url" — share it with me.`;
       markSaved();
     },
     record: () => (recorder || recCountdown ? stopRec() : startRec()),
-    narrate: () => $("#narr-file").click(),
-    "narr-pick": () => $("#narr-file").click(),
+    narrate: () => { $("#narr-menu").hidden = !$("#narr-menu").hidden; },
+    "narr-pick": () => { $("#narr-menu").hidden = !$("#narr-menu").hidden; },
+    "narr-file": () => { $("#narr-menu").hidden = true; $("#narr-file").click(); },
+    "narr-link": () => { $("#narr-menu").hidden = true; pasteVideoLink(); },
     "narr-close": closeNarration,
     "sec-prev": () => goToSection(narrSec - 1),
     "sec-next": () => goToSection(narrSec + 1),

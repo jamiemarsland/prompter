@@ -141,9 +141,19 @@ export async function readScript(request: Request): Promise<{ title?: string; te
   return { text: raw };
 }
 
+// A script names the video it narrates with a paragraph of its own: [video: https://example.com/film.mp4]
+const VIDEO_LINE = /^\[video:\s*https?:\/\/[^\s\]]+\s*\]$/i;
+// Adds (or replaces) that line. Returns null when the link isn't a plain http(s) address.
+export function withVideo(text: string, url: unknown): string | null {
+  const u = String(url ?? "").trim();
+  if (!/^https?:\/\/[^\s\]]+$/i.test(u) || u.length > 2000) return null;
+  const rest = String(text || "").replace(/\r\n?/g, "\n").split(/\n\s*\n/).filter((p) => !VIDEO_LINE.test(p.trim())).join("\n\n").trim();
+  return `${rest}\n\n[video: ${u}]`;
+}
+
 export function clean(input: { title?: string; text?: string; source?: string }) {
   const text = (input.text || "").replace(/\r\n?/g, "\n").trim().slice(0, MAX_CHARS);
-  const firstLine = text.split("\n").find((l) => l.trim()) || "Untitled";
+  const firstLine = text.split("\n").find((l) => l.trim() && !VIDEO_LINE.test(l.trim())) || "Untitled";
   const title = String(input.title || firstLine.replace(/^#+\s*/, "")).trim().slice(0, 120) || "Untitled";
   const source = String(input.source || "grok").trim().slice(0, 40) || "grok";
   return { title, text, source };

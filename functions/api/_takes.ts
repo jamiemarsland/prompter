@@ -4,7 +4,7 @@ export interface TakeDetail {
   flubs?: { ms: number; near?: string }[];
   words?: [number, string][]; // [ms from start, word] as the prompter followed the script
   // An audio-only voiceover recorded over this video. `section` is set when it covers one timed section of the script.
-  narration?: { video: string; start_ms: number; section?: number; sections?: number; section_cue_ms?: number };
+  narration?: { video: string; video_url?: string; start_ms: number; section?: number; sections?: number; section_cue_ms?: number };
 }
 
 const MAX_DETAIL = 400_000;
@@ -16,6 +16,7 @@ export function cleanTake(o: any) {
   const words = (Array.isArray(o?.words) ? o.words : []).slice(0, 20000)
     .filter((w: any) => Array.isArray(w)).map((w: any) => [num(w[0]), str(w[1], 40)] as [number, string]);
   const narration = o?.narration && typeof o.narration === "object" ? { video: str(o.narration.video, 255), start_ms: num(o.narration.start_ms),
+        ...(/^https?:\/\//i.test(str(o.narration.video_url, 2000)) ? { video_url: str(o.narration.video_url, 2000) } : {}),
         ...(num(o.narration.section) ? { section: num(o.narration.section), sections: num(o.narration.sections), section_cue_ms: num(o.narration.section_cue_ms) } : {}) } : undefined;
   let detail = JSON.stringify({ flubs, words, narration });
   if (detail.length > MAX_DETAIL) detail = JSON.stringify({ flubs, words: [], narration });
@@ -47,7 +48,7 @@ export function describeTake(t: any, full: boolean) {
   const lines = [
     `${t.id} · ${t.title} · take ${t.n}${Number(t.kept) ? " · ★ keeper" : ""} · ${clock(Number(t.duration_ms))} · ${new Date(Number(t.created_at)).toISOString().slice(0, 16).replace("T", " ")} UTC`,
     `File: "${t.filename}" ${where}${t.size ? `, ${(Number(t.size) / 1e6).toFixed(1)} MB` : ""}.`,
-    d.narration ? `Narration: an audio-only voiceover recorded while the video "${d.narration.video}" played muted. It starts at ${clock(d.narration.start_ms)} into that video, so place the audio there. The video is the user's own file, probably in the same folder or where they keep their recordings. Flub and word times below are from the start of the audio. A notes file with the same name ending .json sits beside the audio when it was saved to a folder.` : "",
+    d.narration ? `Narration: an audio-only voiceover recorded while the video "${d.narration.video}" played muted. It starts at ${clock(d.narration.start_ms)} into that video, so place the audio there. ${d.narration.video_url ? `The video was played from this link: ${d.narration.video_url}` : "The video is the user's own file, probably in the same folder or where they keep their recordings."} Flub and word times below are from the start of the audio. A notes file with the same name ending .json sits beside the audio when it was saved to a folder.` : "",
     d.narration?.section ? `Section: this take is section ${d.narration.section} of ${d.narration.sections} in the script. That section's cue is ${clock(d.narration.section_cue_ms || 0)} in the video, and the recording starts a few seconds before it as a run-in.` : "",
     t.script_id ? `Script id: ${t.script_id}` : "",
     flubs.length ? `Flubs marked: ${flubs.length}` : "No flubs marked.",

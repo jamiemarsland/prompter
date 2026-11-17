@@ -1,4 +1,4 @@
-import { clean, db, inboxFor, json, newId, preflight, type Ctx, type Env } from "../api/_shared";
+import { clean, db, inboxFor, json, newId, preflight, withVideo, type Ctx, type Env } from "../api/_shared";
 import { describeTake } from "../api/_takes";
 
 // A minimal MCP server (Streamable HTTP, stateless JSON responses) so AI agents can
@@ -23,6 +23,7 @@ const TOOLS = [
       properties: {
         title: { type: "string", description: "Short title shown in the script library, e.g. 'Episode 12 intro'." },
         text: { type: "string", description: "The full script, written to be read aloud. For talking points, one \"- \" line per point instead. For a voiceover over a video, start each paragraph with where it belongs in the video, as [m:ss] or [m:ss-m:ss] (for example [0:36-1:08]); the user then records one section at a time against the picture. A bare [m:ss] inside a paragraph is a pace mark for the words after it." },
+        video_url: { type: "string", description: "Optional. A public link straight to a video file (for example one ending in .mp4) that this script is a voiceover for. The prompter loads it above the script so the user can record against the picture. It must open without signing in; a YouTube or Vimeo page will not work." },
       },
       required: ["title", "text"],
     },
@@ -37,6 +38,7 @@ const TOOLS = [
         id: { type: "string", description: "The script id returned by send_script or list_scripts." },
         title: { type: "string" },
         text: { type: "string", description: "The full revised script." },
+        video_url: { type: "string", description: "Optional. A public link straight to a video file (for example one ending in .mp4) that this script is a voiceover for. The prompter loads it above the script so the user can record against the picture. It must open without signing in; a YouTube or Vimeo page will not work." },
       },
       required: ["id", "text"],
     },
@@ -81,8 +83,10 @@ const text = (t: string, isError = false) => ({ content: [{ type: "text", text: 
 async function callTool(name: string, args: any, env: Env, origin: string, inbox: string) {
   const d = await db(env);
   if (name === "send_script") {
-    const s = clean({ title: args?.title, text: args?.text, source: "ai" });
-    if (!s.text) return text("The script text was empty.", true);
+    let body = String(args?.text ?? "");
+    if (args?.video_url) { const v = withVideo(body, args.video_url); if (v == null) return text("video_url has to be a plain http(s) link straight to a video file.", true); body = v; }
+    const s = clean({ title: args?.title, text: body, source: "ai" });
+    if (!String(args?.text ?? "").trim()) return text("The script text was empty.", true);
     const id = newId();
     const now = Date.now();
     await d.prepare("INSERT INTO scripts (id, inbox, title, source, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -93,8 +97,10 @@ async function callTool(name: string, args: any, env: Env, origin: string, inbox
   if (name === "update_script") {
     const row = await d.prepare("SELECT title FROM scripts WHERE id = ? AND inbox = ?").bind(String(args?.id || ""), inbox).first();
     if (!row) return text("No script with that id.", true);
-    const s = clean({ title: args?.title || row.title, text: args?.text });
-    if (!s.text) return text("The script text was empty.", true);
+    let body = String(args?.text ?? "");
+    if (args?.video_url) { const v = withVideo(body, args.video_url); if (v == null) return text("video_url has to be a plain http(s) link straight to a video file.", true); body = v; }
+    const s = clean({ title: args?.title || row.title, text: body });
+    if (!String(args?.text ?? "").trim()) return text("The script text was empty.", true);
     await d.prepare("UPDATE scripts SET title = ?, body = ?, updated_at = ? WHERE id = ? AND inbox = ?").bind(s.title, s.text, Date.now(), args.id, inbox).run();
     return text(`Updated "${s.title}". If it's open on the prompter, the new version appears within a few seconds and keeps the user's place. If they're reading or recording, it loads when they pause.`);
   }

@@ -33,6 +33,16 @@ Send a list with one `- ` line per point instead of a script, and Prompter treat
 
 Drop a video onto Prompter (or press the narrate button) to record a voiceover for it. The video plays muted above the script while only your voice is recorded, with voice following, talking points and flub markers working as usual. You review it as the video with your new voice over it. The audio saves to your takes folder with a `.json` notes file saying which video it belongs to and where in it the voice starts, and your AI gets the same details through `get_take`. The video never leaves your computer.
 
+### A video from a link
+
+The narrate button also takes a link, as long as it points straight at a video file (one ending in `.mp4`, say) that opens without signing in. A YouTube or Vimeo page won't work. Prompter offers to keep the link with the script, as a paragraph of its own:
+
+```
+[video: https://example.com/film.mp4]
+```
+
+A script with that line opens with its video already loaded, on any device. An AI can set it with `video_url` on `send_script` or `update_script`. Prompter only stores the link, never the video, and a file you dropped in yourself is never replaced by a script's link.
+
 ### Timed sections
 
 Start a paragraph with where it belongs in the video and it becomes a section:

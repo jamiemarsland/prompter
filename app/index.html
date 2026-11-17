@@ -534,7 +534,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
 </div>
 <div id="narr-wrap" hidden>
   <video id="narr-video" muted playsinline preload="auto"></video>
-  <div class="narr-bar"><span id="narr-name"></span><span id="narr-sec" hidden><button data-act="sec-prev" title="Previous section ([)" aria-label="Previous section">‹</button><b id="narr-sec-label"></b><button data-act="sec-next" title="Next section (])" aria-label="Next section">›</button></span><button data-act="narr-play" id="narr-play" title="Watch the video without recording (P)">▶ Play</button><span id="narr-time">0:00</span><button data-act="narr-sound" id="narr-sound" title="Hear the video's own sound while you record (wear headphones)">Sound off</button><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
+  <div class="narr-bar"><span id="narr-name"></span><span id="narr-sec" hidden><button data-act="sec-prev" title="Previous section ([)" aria-label="Previous section">‹</button><b id="narr-sec-label"></b><button data-act="sec-next" title="Next section (])" aria-label="Next section">›</button></span><button data-act="narr-play" id="narr-play" title="Watch the video without recording (P)">▶ Play</button><button data-act="narr-back" id="narr-back" title="Play your latest take over the video (B)" hidden>▶ Hear take</button><span id="narr-time">0:00</span><button data-act="narr-sound" id="narr-sound" title="Hear the video's own sound while you record (wear headphones)">Sound off</button><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
 </div>
 <input type="file" id="narr-file" accept="video/*" hidden>
 <div id="narr-menu" class="glass" role="menu" hidden>
@@ -657,6 +657,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
       <kbd>Home</kbd><span>Back to start</span>
       <kbd>R</kbd><span>Record / stop recording</span>
       <kbd>P</kbd><span>Play / pause the narration video</span>
+      <kbd>B</kbd><span>Hear your latest take over the video</span>
       <kbd>X</kbd><span>Mark a flub while recording</span>
       <kbd>M</kbd><span>Mirror</span>
       <kbd>F</kbd><span>Full screen</span>
@@ -702,6 +703,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
 (() => {
   let pipWin = null; // the floating window, while the stage is living in it
   let previewing = false; // watching the narration video without recording
+  let playback = null; // the take being played back over the video in the main view
   let narr = null; // { name, url } while a video is loaded for narration
   const $ = (s, el) => (el ? el.querySelector(s) : document.querySelector(s) || pipWin?.document.querySelector(s));
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -974,7 +976,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     const t = performance.now(); // not the frame's own timestamp: each window counts from a different start
     const dt = Math.min(0.1, (t - lastT) / 1000 || 0); lastT = t;
     narrTick();
-    if (previewing && timed() && !narrVideo.paused && !playing) {
+    if ((previewing || playback) && timed() && !narrVideo.paused && !playing) {
       const target = paceIdx ?? sections[narrSec]?.from ?? 0;
       const d = Math.max(0, Math.min(maxPos, targetFor(target))) - pos;
       if (Math.abs(d) > 0.5) { pos += d * Math.min(1, dt * 3.2); setScroll(pos); progress(); }
@@ -1246,7 +1248,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#narr-name").textContent = file.name; $("#narr-wrap").hidden = false;
     document.body.classList.add("narrating");
     $("#record").title = "Record narration (R)";
-    applyNarrSound(); narrSec = 0; syncSections();
+    applyNarrSound(); showBackButton(); narrSec = 0; syncSections();
     requestAnimationFrame(() => { measure(); if (timed()) goToSection(0); else placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
     toast(timed() ? `This script is timed to the video. Record counts you in and runs to the end. [ and ] pick where to start.`
       : "Press Record to narrate. The video plays muted and only your voice is recorded.", null, 6000);
@@ -1290,7 +1292,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       let k = secRun.i; while (sections[k + 1] && t >= sections[k + 1].start - 0.3) k++;
       if (k !== secRun.i) { secRun.i = narrSec = k; syncSections(); }
     }
-    if (previewing && timed() && !narrVideo.paused) {
+    if ((previewing || playback) && timed() && !narrVideo.paused) {
       // Watching: the script keeps up with the picture, section by section.
       let k = 0; while (sections[k + 1] && t >= sections[k + 1].start - 0.3) k++;
       if (k !== narrSec) { narrSec = k; syncSections(); }
@@ -1318,7 +1320,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#narr-name").textContent = name; $("#narr-wrap").hidden = false;
     document.body.classList.add("narrating");
     $("#record").title = "Record narration (R)";
-    applyNarrSound(); narrSec = 0; syncSections();
+    applyNarrSound(); showBackButton(); narrSec = 0; syncSections();
     requestAnimationFrame(() => { measure(); if (timed()) goToSection(0); else placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
     if (!fromScript) toast(timed() ? `This script is timed to the video. Record counts you in and runs to the end.` : "Press Record to narrate. Only your voice is recorded.", null, 5000);
   }
@@ -1350,7 +1352,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   }
   function closeNarration() {
     if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
-    narrVideo.pause(); const was = narr; narr = null; narrVideo.removeAttribute("src"); narrVideo.load();
+    stopPlayback(); narrVideo.pause(); const was = narr; narr = null; narrVideo.removeAttribute("src"); narrVideo.load();
     if (was && !was.remote) URL.revokeObjectURL(was.url);
     narr = null; $("#narr-wrap").hidden = true; document.body.classList.remove("narrating"); syncSections();
     $("#record").title = "Record yourself (R)";
@@ -1364,12 +1366,40 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     if (!narr) return;
     if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
     if (previewing) return stopPreview();
+    stopPlayback();
     if (narrVideo.ended) narrVideo.currentTime = 0;
     previewing = true; narrVideo.muted = false; narrVideo.volume = 0.8;
     narrVideo.play().catch(() => stopPreview());
   }
   function stopPreview() { if (!previewing) return; previewing = false; narrVideo.pause(); applyNarrSound(); }
-  const playLabel = () => ($("#narr-play").textContent = previewing && !narrVideo.paused ? "❚❚ Pause" : "▶ Play");
+  const playLabel = () => {
+    $("#narr-play").textContent = previewing && !narrVideo.paused ? "❚❚ Pause" : "▶ Play";
+    $("#narr-back").textContent = playback && !narrVideo.paused ? "■ Stop" : "▶ Hear take";
+  };
+  // Hear take: your latest recording for this video, played over the picture (muted) right here, with the words following.
+  const backAudio = new Audio();
+  function lastTake() { return narr && [...takes].reverse().find(t => t.narration && t.narration.videoUrl === narr.url); }
+  function showBackButton() { $("#narr-back").hidden = !lastTake(); }
+  function togglePlayback() {
+    if (playback) return stopPlayback();
+    const t = lastTake(); if (!t) return toast("Record a take first.", null, 2500);
+    if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
+    stopPreview(); if (playing) pause();
+    playback = t; narrVideo.muted = true;
+    backAudio.src = t.url; backAudio.currentTime = 0;
+    narrVideo.currentTime = t.narration.startMs / 1000;
+    narrVideo.play().catch(() => stopPlayback());
+  }
+  function stopPlayback() { if (!playback) return; playback = null; backAudio.pause(); narrVideo.pause(); applyNarrSound(); playLabel(); }
+  const backSync = () => {
+    if (!playback) return;
+    const at = narrVideo.currentTime - playback.narration.startMs / 1000;
+    if (at < 0 || (backAudio.duration && at > backAudio.duration)) { backAudio.pause(); return; }
+    if (Math.abs(backAudio.currentTime - at) > 0.15) backAudio.currentTime = at;
+    if (!narrVideo.paused && backAudio.paused) backAudio.play().catch(() => {});
+  };
+  narrVideo.addEventListener("play", backSync); narrVideo.addEventListener("timeupdate", backSync);
+  ["pause", "ended"].forEach(ev => narrVideo.addEventListener(ev, () => { if (playback) { playback = null; backAudio.pause(); applyNarrSound(); playLabel(); } }));
   ["play", "pause", "ended"].forEach(ev => narrVideo.addEventListener(ev, () => { if (ev !== "play" && previewing) { previewing = false; applyNarrSound(); } playLabel(); }));
   narrVideo.addEventListener("loadedmetadata", () => narrVideo.dispatchEvent(new Event("timeupdate")));
   let narrEndTimer = null;
@@ -1437,7 +1467,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   async function startRec() {
     if (recorder || recCountdown) return;
     if (takesDir && !(await folderReady())) toast("No access to your takes folder, so takes will download instead.", null, 4000);
-    stopPreview();
+    stopPreview(); stopPlayback();
     if (narr ? !(await startMic()) : !(await startCam())) return;
     if (playing) pause();
     narrTakeSec = null;
@@ -1648,7 +1678,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       reviewAudio.src = t.url; v.muted = !S.narrSound; v.volume = 0.6; v.src = t.narration.videoUrl; v.currentTime = t.narration.startMs / 1000;
     } else { reviewAudio.removeAttribute("src"); v.muted = false; v.volume = 1; v.src = t.url; v.currentTime = 0; }
     const sn = t.narration?.section;
-    $("#rv-next").hidden = !(sn && timed() && sn.n < sections.length);
+    $("#rv-next").hidden = true; // takes now run to the end of the video
     v.play().catch(() => {});
     $("#rv-title").textContent = `${t.narration ? "Narration" : "Take"} ${t.n}${sn ? ` · section ${sn.n} of ${sn.of}` : ""} · ${t.title}`;
     $("#rv-meta").textContent = `${clock(t.dur)}${t.flubs.length ? ` · ${t.flubs.length} flub${t.flubs.length > 1 ? "s" : ""} marked` : ""}`;
@@ -1664,6 +1694,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   $("#review").addEventListener("click", e => { if (e.target.id === "review") closeReview(); });
 
   function renderTakes() {
+    showBackButton();
     $("#takes-box").hidden = !takes.length;
     $("#takes").innerHTML = takes.map(t => `<div class="take${t.saved ? " saved" : ""}" data-take="${t.id}">
       <button class="star${t.kept ? " on" : ""}" data-take-star title="${t.kept ? "Keeper" : "Mark as a keeper"}">${t.kept ? "★" : "☆"}</button>
@@ -2394,6 +2425,7 @@ The reply includes a "url" — share it with me.`;
     "sec-prev": () => goToSection(narrSec - 1),
     "sec-next": () => goToSection(narrSec + 1),
     "narr-play": () => togglePreview(),
+    "narr-back": () => togglePlayback(),
     "narr-sound": () => { S.narrSound = !S.narrSound; save(); applyNarrSound(); if (S.narrSound) toast("Wear headphones, so the video's sound isn't recorded with your voice.", null, 4500); },
     flub: markFlub,
     popout: popOut,
@@ -2501,6 +2533,7 @@ The reply includes a "url" — share it with me.`;
     else if (k === "r") actions.record();
     else if (k === "x") markFlub();
     else if (k === "p" && narr) togglePreview();
+    else if (k === "b" && narr) togglePlayback();
     else if (k === "f") actions.fullscreen();
     else if (k === "l") openDrawer("library");
     else if (k === "a") openDrawer("settings");

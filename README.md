@@ -35,6 +35,8 @@ Drop a video onto Prompter (or press the narrate button) to record a voiceover f
 
 To watch the video before you record, press **Play** in the bar under it (or P). It plays with its own sound, and if the script is timed (see below) the words move along with the picture.
 
+Once you've recorded a take, **Hear take** (or B) in the same bar plays your latest take over the video right there, with the words following, so you can check it lines up.
+
 ### A video from a link
 
 The narrate button also takes a link, as long as it points straight at a video file (one ending in `.mp4`, say) that opens without signing in. A YouTube or Vimeo page won't work. Prompter offers to keep the link with the script, as a paragraph of its own:

@@ -538,7 +538,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
 </div>
 <div id="narr-wrap" hidden>
   <video id="narr-video" muted playsinline preload="auto"></video>
-  <div class="narr-bar"><input type="range" id="narr-seek" min="0" max="1000" value="0" step="1" aria-label="Position in the video" title="Drag to move through the video; the script follows"><span id="narr-name"></span><span id="narr-sec" hidden><button data-act="sec-prev" title="Previous section ([)" aria-label="Previous section">‹</button><b id="narr-sec-label"></b><button data-act="sec-next" title="Next section (])" aria-label="Next section">›</button><button data-act="sec-scope" id="narr-scope" title="Record the whole video in one take, or just this section"></button></span><button data-act="narr-play" id="narr-play" title="Watch the video without recording (P)">▶ Play</button><button data-act="narr-back" id="narr-back" title="Play your latest take over the video (B)" hidden>▶ Hear take</button><span id="narr-time">0:00</span><button data-act="narr-sound" id="narr-sound" title="Hear the video's own sound while you record (wear headphones)">Sound off</button><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
+  <div class="narr-bar"><input type="range" id="narr-seek" min="0" max="1000" value="0" step="1" aria-label="Position in the video" title="Drag to move through the video; the script follows"><span id="narr-name"></span><span id="narr-sec" hidden><button data-act="sec-prev" title="Previous section ([)" aria-label="Previous section">‹</button><b id="narr-sec-label"></b><button data-act="sec-next" title="Next section (])" aria-label="Next section">›</button><button data-act="sec-scope" id="narr-scope" title="Record the whole video in one take, or just this section"></button></span><button data-act="narr-auto" id="narr-auto" title="Listen to the video's voiceover and time the script to it" hidden>✨ Auto-time</button><button data-act="narr-play" id="narr-play" title="Watch the video without recording (P)">▶ Play</button><button data-act="narr-back" id="narr-back" title="Play your latest take over the video (B)" hidden>▶ Hear take</button><span id="narr-time">0:00</span><button data-act="narr-sound" id="narr-sound" title="Hear the video's own sound while you record (wear headphones)">Sound off</button><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
 </div>
 <input type="file" id="narr-file" accept="video/*" hidden>
 <div id="narr-menu" class="glass" role="menu" hidden>
@@ -1249,12 +1249,12 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
     if (narr && !narr.remote) URL.revokeObjectURL(narr.url);
     if (camStream) stopCam();
-    narr = { name: file.name, url: URL.createObjectURL(file) };
+    narr = { name: file.name, url: URL.createObjectURL(file), file };
     narrVideo.src = narr.url; narrVideo.currentTime = 0;
     $("#narr-name").textContent = file.name; $("#narr-wrap").hidden = false;
     document.body.classList.add("narrating");
     $("#record").title = "Record your voiceover (R)";
-    applyNarrSound(); showBackButton(); narrSec = 0; syncSections();
+    applyNarrSound(); showBackButton(); showAutoButton(); narrSec = 0; syncSections();
     requestAnimationFrame(() => { measure(); if (timed()) goToSection(0); else placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
     toast(timed() ? `This script is timed to the video. Record counts you in and runs to the end. [ and ] pick where to start.`
       : "Press Record to narrate. The video plays muted and only your voice is recorded.", null, 6000);
@@ -1379,7 +1379,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#narr-name").textContent = name; $("#narr-wrap").hidden = false;
     document.body.classList.add("narrating");
     $("#record").title = "Record your voiceover (R)";
-    applyNarrSound(); showBackButton(); narrSec = 0; syncSections();
+    applyNarrSound(); showBackButton(); showAutoButton(); narrSec = 0; syncSections();
     requestAnimationFrame(() => { measure(); if (timed()) goToSection(0); else placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
     if (!fromScript) toast(timed() ? `This script is timed to the video. Record counts you in and runs to the end.` : "Press Record to narrate. Only your voice is recorded.", null, 5000);
   }
@@ -1419,6 +1419,64 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   }
   $("#narr-file").addEventListener("change", e => { loadNarration(e.target.files[0]); e.target.value = ""; });
   narrVideo.addEventListener("timeupdate", () => ($("#narr-time").textContent = clock(narrVideo.currentTime * 1000) + (narrVideo.duration ? " / " + clock(narrVideo.duration * 1000) : "")));
+  // Auto-time: the server listens to the video's voiceover and writes where each paragraph falls.
+  let autoTime = { enabled: false, busy: false };
+  async function checkAutoTime() {
+    if (!key) return;
+    try { const r = await fetch("/api/autotime", { headers: { authorization: "Bearer " + key } }); if (r.ok) autoTime.enabled = !!(await r.json()).enabled; } catch {}
+    showAutoButton();
+  }
+  function showAutoButton() { $("#narr-auto").hidden = !(narr && autoTime.enabled && key); }
+  // A small 16 kHz mono WAV of the video's sound: all the speech service needs, and far smaller than the video.
+  async function speechWav(file) {
+    const dec = await new OfflineAudioContext(1, 1, 16000).decodeAudioData(await file.arrayBuffer())
+      .catch(() => { throw new Error("Couldn't read any sound from this video. Does it have a voiceover?"); });
+    const n = dec.length, x = new Float32Array(n);
+    for (let c = 0; c < dec.numberOfChannels; c++) { const d = dec.getChannelData(c); for (let i = 0; i < n; i++) x[i] += d[i] / dec.numberOfChannels; }
+    const b = new ArrayBuffer(44 + n * 2), v = new DataView(b), str = (o, t) => [...t].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
+    str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVE"); str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 16000, true); v.setUint32(28, 32000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.max(-32768, Math.min(32767, Math.round(x[i] * 32767))), true);
+    return { blob: new Blob([b], { type: "audio/wav" }), seconds: dec.duration };
+  }
+  async function runAutoTime() {
+    if (!narr || autoTime.busy) return;
+    if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
+    if (!key) return toast("Auto-time needs your private inbox. Connect it in the library first.", null, 4500);
+    const body = current?.body?.trim() || "", hasWords = !!(current && words.length);
+    if (hasWords && timed() && !confirm("This script already has times. Replace them with times from the video's voiceover?")) return;
+    if (!hasWords && !confirm("There's no script open. Write one from what's said in this video, already timed?")) return;
+    stopPreview(); stopPlayback();
+    const btn = $("#narr-auto"); autoTime.busy = true; btn.disabled = true; btn.textContent = "Listening…";
+    try {
+      let r;
+      if (narr.remote) {
+        r = await fetch("/api/autotime", { method: "POST", headers: { authorization: "Bearer " + key, "content-type": "application/json" }, body: JSON.stringify({ text: hasWords ? body : "", url: narr.url, seconds: narrVideo.duration || 0 }) });
+      } else {
+        btn.textContent = "Reading the sound…";
+        const { blob, seconds } = await speechWav(narr.file);
+        if (blob.size > 24 * 1024 * 1024) throw new Error("That video is too long to time in one go (about 13 minutes is the most).");
+        btn.textContent = "Listening…";
+        const f = new FormData(); f.append("audio", blob, "audio.wav"); f.append("text", hasWords ? body : ""); f.append("seconds", String(Math.round(seconds)));
+        r = await fetch("/api/autotime", { method: "POST", headers: { authorization: "Bearer " + key }, body: f });
+      }
+      const o = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(o.error || "Auto-timing failed.");
+      if (hasWords) {
+        const prev = current;
+        await saveBody(current, o.text); current = { ...current, body: o.text };
+        showBody(current); sync();
+        toast(`Timed ${o.timed} paragraphs to the video. Press Play to check.`, () => undoUpdate(prev, current), 8000, "Undo");
+      } else {
+        const title = narr.name.replace(/\.[a-z0-9]+$/i, "") || "Voiceover";
+        const res = await api("", { method: "POST", body: JSON.stringify({ title, text: o.text, source: "auto-time" }) });
+        knownIds.add(res.id);
+        load({ id: res.id, title, body: o.text, source: "auto-time", created_at: Date.now() }); sync();
+        toast(`Wrote "${title}" from the video, timed in ${o.timed} paragraphs. Edit the words however you like; the times stay.`, null, 7000);
+      }
+    } catch (e) { toast(e.message || "Auto-timing failed.", null, 6000); }
+    finally { autoTime.busy = false; btn.disabled = false; btn.textContent = "✨ Auto-time"; }
+  }
   // Watching before recording: plays with the video's own sound, which goes back to the Sound setting when it stops.
 
   function togglePreview() {
@@ -1833,7 +1891,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   let saved = store.get("saved", !!key); // people who connected before this existed already have their link
   function setKey(k, { isNew = false } = {}) {
     key = k; store.set("key", k);
-    if (k) { navigator.storage?.persist?.().catch(() => {}); markSaved(!isNew); }
+    if (k) { navigator.storage?.persist?.().catch(() => {}); markSaved(!isNew); setTimeout(checkAutoTime, 0); }
   }
   function markSaved(v = true) { saved = v; store.set("saved", v); renderList(); }
   // Accepts the private link, the connector link, or the bare key.
@@ -2529,6 +2587,7 @@ The reply includes a "url" — share it with me.`;
     "sec-next": () => goToSection(narrSec + 1),
     "narr-play": () => togglePreview(),
     "narr-back": () => togglePlayback(),
+    "narr-auto": () => runAutoTime(),
     "rv-enh": () => { if (!reviewing?.enhanced) return; S.hearOriginal = !S.hearOriginal; save(); swapTakeAudio(reviewing); enhanceUi(reviewing); },
     "sec-scope": () => { S.narrOneSec = !S.narrOneSec; save(); syncSections(); toast(S.narrOneSec ? "Record does just this section, then stops. ‹ › pick the section." : "Record runs from this section to the end of the video.", null, 3500); },
     "narr-sound": () => { S.narrSound = !S.narrSound; save(); applyNarrSound(); if (S.narrSound) toast("Wear headphones, so the video's sound isn't recorded with your voice.", null, 4500); },
@@ -2672,6 +2731,7 @@ The reply includes a "url" — share it with me.`;
   window.__loadedAt = Date.now();
   const params = new URLSearchParams(location.search);
   if (params.get("key")) { setKey(params.get("key")); params.delete("key"); history.replaceState(null, "", location.pathname + (params.toString() ? "?" + params : "") + location.hash); }
+  if (key) setTimeout(checkAutoTime, 0);
   $("#popout").hidden = !window.documentPictureInPicture;
   applySettings(); setPlayUi(); setupHelp(); renderFolder();
   if (canPickFolder) idb("readonly", st => st.get("takesDir")).then(h => { takesDir = h || null; renderFolder(); }).catch(() => {});

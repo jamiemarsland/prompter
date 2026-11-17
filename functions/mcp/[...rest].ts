@@ -1,5 +1,6 @@
 import { clean, db, inboxFor, json, newId, preflight, withVideo, type Ctx, type Env } from "../api/_shared";
 import { describeTake } from "../api/_takes";
+import { AutoTimeError, alignScript, scriptFromSpeech, transcribe } from "../api/_autotime";
 
 // A minimal MCP server (Streamable HTTP, stateless JSON responses) so AI agents can
 // send scripts with a single connector URL: https://<space>/mcp/<inbox key>
@@ -9,7 +10,7 @@ const INSTRUCTIONS = `This connector sends scripts to the user's teleprompter. A
 Write for speaking aloud: short sentences, conversational, no stage-y markdown. About 150 spoken words is one minute.
 Formatting the prompter understands: a blank line between paragraphs; "## Heading" for a section; [square brackets] for delivery notes such as [smile] or [pause] (voice mode skips them); "//" for a breath. Avoid tables, links and emoji, and don't use bullet lists in a word-for-word script.
 Talking points: if the user wants to speak in their own words rather than read (they ask for "talking points", "bullet points", "notes" or "an outline"), send a list with one "- " line per point and nothing else but optional "## " headings. Keep each point to a short phrase of key words, not a sentence, e.g. "- why Elgato's app frustrated me". The prompter shows one point at a time and moves on when it hears them start the next one.
-After sending, tell the user the title and that it's on their prompter. To revise a script after feedback, use update_script with the same id instead of sending a new one.
+Voiceovers: if the user wants to record a voiceover for an existing video that already has speech, send the script with video_url, then call time_script so the words keep pace with the picture. time_script with no id writes a timed script from what is said in the video. After sending, tell the user the title and that it's on their prompter. To revise a script after feedback, use update_script with the same id instead of sending a new one.
 
 The user can also record themselves on the prompter. list_takes and get_take describe those recordings so you can edit them: the file name, where it was saved, the moments they marked as flubs, and rough word timings. The video file itself is on the user's computer, not on this server. If you can read their files (for example in Claude Code), find it by name in the folder given, usually under ~/Movies or ~/Downloads; otherwise ask them to share it. Prefer takes marked as keepers.`;
 
@@ -67,6 +68,12 @@ const TOOLS = [
     title: "Get a take for editing",
     description: "Everything needed to edit one recording: where the video file is, the flub markers (timestamps where the user tripped up) and rough word-by-word timings against the script. Omit id for the latest take.",
     inputSchema: { type: "object", properties: { id: { type: "string", description: "Take id from list_takes. Leave out for the most recent take." } } },
+  },
+  {
+    name: "time_script",
+    title: "Time a script to its video",
+    description: "Listens to a video's voiceover and writes where each paragraph of the script falls in it, so the prompter keeps the words in time with the picture while the user records a new voiceover. Uses the script's own video link unless you give video_url, which must link straight to a video file that opens without signing in. Leave out id to make a new script from what's said in the video. Each user gets a daily allowance of about 30 minutes of audio.",
+    inputSchema: { type: "object", properties: { id: { type: "string", description: "Script to time. Leave out to write a new script from the video's speech." }, video_url: { type: "string", description: "Public link straight to the video file. Optional when the script already has one." } } },
   },
   {
     name: "get_script",
@@ -135,6 +142,29 @@ async function callTool(name: string, args: any, env: Env, origin: string, inbox
     }
     return text(out);
   }
+  if (name === "time_script") {
+    const row = args?.id ? await d.prepare("SELECT * FROM scripts WHERE id = ? AND inbox = ?").bind(String(args.id), inbox).first() : null;
+    if (args?.id && !row) return text("No script with that id.", true);
+    const linked = row && String(row.body).match(/^\[video:\s*(https?:\/\/[^\s\]]+)\s*\]$/im)?.[1];
+    const url = String(args?.video_url || linked || "");
+    if (!/^https?:\/\/[^\s\]]+$/i.test(url)) return text("Give video_url: a public link straight to the video file (one ending in .mp4, for example).", true);
+    try {
+      const heard = await transcribe(env as any, inbox, { url });
+      if (row) {
+        const out = alignScript(String(row.body), heard);
+        const body = withVideo(out.text, url) ?? out.text;
+        await d.prepare("UPDATE scripts SET body = ?, updated_at = ? WHERE id = ? AND inbox = ?").bind(body, Date.now(), row.id, inbox).run();
+        return text(`Timed "${row.title}" to the video: ${out.timed} paragraphs across ${Math.round(out.duration)} seconds. It's on the prompter with the video loaded, and the words now keep pace with the picture.`);
+      }
+      const out = scriptFromSpeech(heard, url);
+      const s = clean({ title: args?.title || decodeURIComponent(url.split("/").pop() || "Voiceover").replace(/\.[a-z0-9]+$/i, ""), text: out.text, source: "ai" });
+      const id = newId(), now = Date.now();
+      await d.prepare("INSERT INTO scripts (id, inbox, title, source, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(id, inbox, s.title, s.source, s.text, now, now).run();
+      return text(`Wrote "${s.title}" (id ${id}) from the video's voiceover, timed in ${out.timed} paragraphs. It's live at ${origin}/app/#${id}. You can rewrite the words with update_script, but keep each paragraph's [m:ss-m:ss] time at its start.`);
+    } catch (e: any) {
+      return text(e instanceof AutoTimeError ? e.message : "Auto-timing failed: " + (e?.message || e), true);
+    }
+  }
   return text(`Unknown tool ${name}.`, true);
 }
 
@@ -144,7 +174,7 @@ async function handle(msg: Rpc, env: Env, origin: string, inbox: string) {
       return {
         protocolVersion: msg.params?.protocolVersion || "2025-06-18",
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "prompter", title: "Prompter teleprompter", version: "1.2.0" },
+        serverInfo: { name: "prompter", title: "Prompter teleprompter", version: "1.3.0" },
         instructions: INSTRUCTIONS,
       };
     case "ping":

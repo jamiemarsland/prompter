@@ -3,3 +3,4 @@
 .prompter-key
 .spacefast/
 dist/
+__pycache__/

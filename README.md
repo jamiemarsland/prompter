@@ -39,6 +39,18 @@ Once you've recorded a take, **Hear take** (or B) in the same bar plays your lat
 
 In a timed script the script and the video stay together while you're getting ready: scroll the words (or use the arrow keys) and the video jumps to that moment; drag the bar under the video and the words jump to what's due then.
 
+### Auto-time
+
+Press **✨ Auto-time** in the video bar and Prompter listens to the video's existing voiceover and writes where each paragraph of your script falls, so the words keep pace with the picture. With no script open, it writes one from what's said, already timed. A video from your computer has its sound boiled down in the browser to a small 16 kHz WAV before it's sent; a linked video is fetched by the speech service directly. Your AI can do the same with the `time_script` tool.
+
+Speech recognition is [Groq](https://groq.com)'s Whisper (`whisper-large-v3-turbo`, word timestamps), paid for by the Space owner, so it only switches on when the Space has a `GROQ_API_KEY` variable:
+
+```bash
+pbpaste | sf env set GROQ_API_KEY --value-from-stdin --space prompter
+```
+
+Each inbox gets 30 minutes of audio a day (UTC), counted in `autotime_usage`.
+
 ### Enhanced audio
 
 Each narration take is cleaned up right after you record it, in your browser: rumble is cut, background noise is removed with [RNNoise](https://github.com/xiph/rnnoise) (the WebAssembly build from [@shiguredo/rnnoise-wasm](https://github.com/shiguredo/rnnoise-wasm), Apache 2.0, in `app/vendor/`), the voice gets a gentle EQ and de-ess, its level is evened out, and the result is set to -16 LUFS with peaks under -1 dBFS. It saves as a 48 kHz WAV beside your original, which is always kept. The review's "Hearing: enhanced / original" button switches between them, and Hear take plays whichever you picked. Turn it off with "Enhance narration audio" in Settings. Nothing is uploaded.

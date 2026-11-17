@@ -144,6 +144,8 @@ body.points.dim-spoken .w.spoken { color: inherit; }
 /* The controls get their own strip under the picture, so they never sit on top of it. */
 #narr-wrap .narr-bar { flex: none; display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; padding: 7px 10px;
   background: #161616; border-top: 1px solid rgba(255,255,255,.08); color: #fff; font: 12px/1.3 Inter, system-ui, sans-serif; }
+#narr-seek { flex: 0 0 100%; margin: 0 0 2px; height: 14px; accent-color: var(--accent); cursor: pointer; }
+#narr-seek:disabled { opacity: .4; cursor: default; }
 #narr-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .85; }
 #narr-time { font-variant-numeric: tabular-nums; }
 #narr-wrap .narr-bar button { height: 26px; padding: 0 9px; border: 0; border-radius: 8px; background: rgba(255,255,255,.16); color: #fff; font: inherit; cursor: pointer; }
@@ -536,7 +538,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
 </div>
 <div id="narr-wrap" hidden>
   <video id="narr-video" muted playsinline preload="auto"></video>
-  <div class="narr-bar"><span id="narr-name"></span><span id="narr-sec" hidden><button data-act="sec-prev" title="Previous section ([)" aria-label="Previous section">‹</button><b id="narr-sec-label"></b><button data-act="sec-next" title="Next section (])" aria-label="Next section">›</button><button data-act="sec-scope" id="narr-scope" title="Record the whole video in one take, or just this section"></button></span><button data-act="narr-play" id="narr-play" title="Watch the video without recording (P)">▶ Play</button><button data-act="narr-back" id="narr-back" title="Play your latest take over the video (B)" hidden>▶ Hear take</button><span id="narr-time">0:00</span><button data-act="narr-sound" id="narr-sound" title="Hear the video's own sound while you record (wear headphones)">Sound off</button><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
+  <div class="narr-bar"><input type="range" id="narr-seek" min="0" max="1000" value="0" step="1" aria-label="Position in the video" title="Drag to move through the video; the script follows"><span id="narr-name"></span><span id="narr-sec" hidden><button data-act="sec-prev" title="Previous section ([)" aria-label="Previous section">‹</button><b id="narr-sec-label"></b><button data-act="sec-next" title="Next section (])" aria-label="Next section">›</button><button data-act="sec-scope" id="narr-scope" title="Record the whole video in one take, or just this section"></button></span><button data-act="narr-play" id="narr-play" title="Watch the video without recording (P)">▶ Play</button><button data-act="narr-back" id="narr-back" title="Play your latest take over the video (B)" hidden>▶ Hear take</button><span id="narr-time">0:00</span><button data-act="narr-sound" id="narr-sound" title="Hear the video's own sound while you record (wear headphones)">Sound off</button><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
 </div>
 <input type="file" id="narr-file" accept="video/*" hidden>
 <div id="narr-menu" class="glass" role="menu" hidden>
@@ -941,7 +943,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     pos = scroller.scrollTop;
     if (S.mode === "voice") { cursor = wordAtGuide(); voiceTarget = null; markSpoken(); }
     else markSpoken();
-    progress();
+    progress(); scriptMoved();
   }, { passive: true });
 
   function wordAtGuide() {
@@ -1272,6 +1274,53 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#narr-scope").textContent = S.narrOneSec ? "Record: this section" : "Record: whole video";
     sections.forEach((sc, k) => sc.el?.classList.toggle("sec-current", k === narrSec));
   }
+  // Script ⇄ video: a word's moment in the video, and the word due at a moment, from section cues and pace marks.
+  function pacePts(k) {
+    const sc = sections[k], pts = (sc.pace || [[sc.from, sc.start]]).slice();
+    if (sc.end == null && sections[k + 1]) pts.push([sections[k + 1].from, sections[k + 1].start]);
+    return pts;
+  }
+  function timeForWord(w) {
+    let k = 0; while (sections[k + 1] && sections[k + 1].from <= w) k++;
+    const pts = pacePts(k);
+    if (w <= pts[0][0]) return pts[0][1];
+    for (let j = 0; j < pts.length - 1; j++) {
+      const [w0, t0] = pts[j], [w1, t1] = pts[j + 1];
+      if (w < w1) return t0 + (t1 - t0) * (w - w0) / Math.max(1, w1 - w0);
+    }
+    return pts[pts.length - 1][1];
+  }
+  function wordForTime(t) {
+    let k = 0; while (sections[k + 1] && sections[k + 1].start <= t) k++;
+    const pts = pacePts(k), sc = sections[k];
+    for (let j = 0; j < pts.length - 1; j++) {
+      const [w0, t0] = pts[j], [w1, t1] = pts[j + 1];
+      if (t < t1) return Math.min(sc.to, Math.max(sc.from, Math.floor(w0 + (w1 - w0) * (t - t0) / Math.max(0.001, t1 - t0))));
+    }
+    return t < pts[0][1] ? sc.from : Math.min(sc.to, pts[pts.length - 1][0]);
+  }
+  const narrIdle = () => narr && timed() && !recorder && !recCountdown && !previewing && !playback && !playing;
+  // You scrolled the script: the video jumps to the matching moment.
+  let scriptSeekTimer = null;
+  function scriptMoved() {
+    if (!narrIdle()) return;
+    clearTimeout(scriptSeekTimer);
+    scriptSeekTimer = setTimeout(() => {
+      if (!narrIdle()) return;
+      const w = wordAtGuide(), t = timeForWord(w);
+      let k = 0; while (sections[k + 1] && sections[k + 1].from <= w) k++;
+      if (k !== narrSec) { narrSec = k; syncSections(); }
+      if (Math.abs(narrVideo.currentTime - t) > 0.2) narrVideo.currentTime = Math.max(0, t);
+    }, 120);
+  }
+  // You moved the video: the script jumps to the words due at that moment.
+  function videoMoved() {
+    if (!narr || !timed() || recorder || recCountdown) return;
+    const t = narrVideo.currentTime;
+    let k = 0; while (sections[k + 1] && sections[k + 1].start <= t + 0.2) k++;
+    if (k !== narrSec) { narrSec = k; syncSections(); }
+    if (!previewing && !playback) placeAt(wordForTime(t));
+  }
   function goToSection(i) {
     if (!timed()) return;
     if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
@@ -1412,6 +1461,13 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   backAudio.addEventListener("ended", () => setTimeout(stopPlayback, 400)); // a one-section take stops with your voice
   ["pause", "ended"].forEach(ev => narrVideo.addEventListener(ev, () => { if (playback) { playback = null; backAudio.pause(); applyNarrSound(); playLabel(); } }));
   ["play", "pause", "ended"].forEach(ev => narrVideo.addEventListener(ev, () => { if (ev !== "play" && previewing) { previewing = false; applyNarrSound(); } playLabel(); }));
+  const seekBar = $("#narr-seek"); let seekDrag = false;
+  seekBar.addEventListener("input", () => {
+    if (recorder || recCountdown || !narrVideo.duration) return;
+    seekDrag = true; narrVideo.currentTime = seekBar.value / 1000 * narrVideo.duration; videoMoved();
+  });
+  seekBar.addEventListener("change", () => { seekDrag = false; });
+  narrVideo.addEventListener("timeupdate", () => { if (!seekDrag && narrVideo.duration) seekBar.value = Math.round(narrVideo.currentTime / narrVideo.duration * 1000); seekBar.disabled = !!(recorder || recCountdown); });
   narrVideo.addEventListener("loadedmetadata", () => narrVideo.dispatchEvent(new Event("timeupdate")));
   let narrEndTimer = null;
   narrVideo.addEventListener("ended", () => { if (recorder && !narrEndTimer) narrEndTimer = setTimeout(() => { narrEndTimer = null; if (recorder) stopRec(); }, 600); }); // a beat of silence after the last frame
@@ -2603,7 +2659,7 @@ The reply includes a "url" — share it with me.`;
     pos = Math.max(0, Math.min(maxPos, pos + dir * lineH));
     if (S.mode === "voice") { voiceTarget = null; setScroll(pos); cursor = wordAtGuide(); markSpoken(); }
     else setScroll(pos);
-    progress();
+    progress(); scriptMoved();
   }
 
   addEventListener("resize", () => { if (inlineEdit) return; measure(); if (S.mode === "voice") snapToCursor(); updateWpm(); });

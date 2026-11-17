@@ -725,6 +725,8 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       <div><b id="rv-title"></b><span class="meta" id="rv-meta"></span></div>
       <span class="spacer"></span>
       <button class="btn" data-act="rv-enh" id="rv-enh" hidden></button>
+      <button class="btn" data-act="rv-bed" id="rv-bed" hidden></button>
+      <button class="btn" data-act="rv-merge" id="rv-merge" hidden title="Makes a copy of the video with your voice on it. The picture is copied untouched.">Save video with voice</button>
       <button class="btn" data-act="rv-discard">Discard</button>
       <button class="btn solid" data-act="rv-retake">Retake</button>
       <button class="btn primary" data-act="rv-keep" style="height:44px">★ Keep</button>
@@ -764,7 +766,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   const small = matchMedia("(max-width: 720px)").matches;
   const S = Object.assign({
     theme: "night", font: "sans", size: small ? 38 : 60, lh: 1.45, measure: 32, guide: 34, center: false,
-    showGuide: true, dim: true, countdown: true, enhance: true, hearOriginal: false, mirrorX: false, mirrorY: false, autoload: true,
+    showGuide: true, dim: true, countdown: true, enhance: true, hearOriginal: false, mergeSound: true, mirrorX: false, mirrorY: false, autoload: true,
     mode: "SpeechRecognition" in window || "webkitSpeechRecognition" in window ? "voice" : "auto", speed: 10, lang: navigator.language?.startsWith("en-GB") ? "en-GB" : "en-US",
   }, store.get("settings", {}));
   const save = () => store.set("settings", S);
@@ -1797,7 +1799,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       id: Date.now(), n, title, dur: Date.now() - recStart, blob, url: URL.createObjectURL(blob), ext,
       filename: `${title.replace(/[\\/:*?"<>|]+/g, "").slice(0, 60)} - ${audioOnly ? "narration" : "take"} ${n}${secOf ? ` - section ${p2(secOf.n)}` : ""} - ${stamp(new Date(recStart))}.${ext}`,
       flubs, words: timeline, scriptId: current && !current.local ? current.id : null, saved: false, kept: false, remoteId: null, inFolder: false,
-      narration: audioOnly && narr ? { video: narr.name, videoUrl: narr.url, link: narr.remote ? narr.url : null, startMs: narrStartMs, section: secOf } : null,
+      narration: audioOnly && narr ? { video: narr.name, videoUrl: narr.url, videoFile: narr.file || null, link: narr.remote ? narr.url : null, startMs: narrStartMs, section: secOf } : null,
     };
     if (t.narration) stopMic();
     takes.push(t); renderTakes();
@@ -1886,6 +1888,73 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     URL.revokeObjectURL(t.url); takes.splice(takes.indexOf(t), 1); renderTakes();
   }
 
+  // ---------- Video with your voice on it ----------
+  // Every kept section of the same video goes in with this take (the newest of each), so a film
+  // recorded a section at a time comes out as one finished video.
+  function mergeParts(t) {
+    const sn = t.narration.section, parts = new Map([[sn ? sn.n : 0, t]]);
+    if (sn) for (const o of takes) {
+      const on = o.narration?.section;
+      if (o !== t && o.kept && on && on.n !== sn.n && o.narration.videoUrl === t.narration.videoUrl) parts.set(on.n, o);
+    }
+    return [...parts.values()];
+  }
+  let merging = null;
+  function mergeUi(t) {
+    const b = $("#rv-merge"), bed = $("#rv-bed"), on = reviewing === t && !!t?.narration;
+    b.hidden = bed.hidden = !on; if (!on) return;
+    const busy = merging?.take === t;
+    b.disabled = bed.disabled = !!merging;
+    b.textContent = busy ? `Making the video… ${Math.round(merging.p * 100)}%` : "Save video with voice";
+    bed.textContent = S.mergeSound ? "Video's sound: kept" : "Video's sound: removed";
+    bed.title = "Whether the saved video keeps its own sound (music, effects) under your voice, or has your voice alone.";
+  }
+  async function mergeTake(t, file = null) {
+    if (merging) return toast("Still making the last video.", null, 3000);
+    if (!t?.narration) return;
+    merging = { take: t, p: 0 }; mergeUi(t);
+    let writable = null, name = "";
+    try {
+      const parts = mergeParts(t);
+      await Promise.all(parts.map(o => o.ready));
+      // The video itself: the file you loaded, or the linked one if its host lets a page read it.
+      let video = file || t.narration.videoFile;
+      if (!video) {
+        try { const r = await fetch(t.narration.videoUrl); if (!r.ok) throw 0; video = await r.blob(); }
+        catch { merging = null; mergeUi(t); return toast("Prompter can play this linked video but its host won't let a page copy it. Choose the same video from your computer and it'll carry on.", () => pickMergeFile(t), 12000, "Choose file"); }
+      }
+      const { merge } = await import("./merge.js");
+      const voice = o => (o.enhanced && !S.hearOriginal ? o.enhanced.blob : o.blob);
+      name = `${t.title.replace(/[\\/:*?"<>|]+/g, "").slice(0, 60)} - with voice - ${stamp(new Date())}`;
+      const big = video.size > 400 * 1024 * 1024;
+      if (big && !takesDir) throw new Error("This video is too big to build in memory. Choose a takes folder (Appearance › Save takes to) and it's written straight there.");
+      const webm = /webm|matroska/i.test(video.type) || /\.(webm|mkv)$/i.test(video.name || t.narration.video || "");
+      name += webm ? ".webm" : ".mp4";
+      if (takesDir) writable = await (await takesDir.getFileHandle(name, { create: true })).createWritable();
+      const out = await merge({ video, webm, parts: parts.map(o => ({ blob: voice(o), startMs: o.narration.startMs })), keepSound: S.mergeSound, writable,
+        onProgress: p => { if (merging && p > merging.p) { merging.p = p; mergeUi(t); } } });
+      const filename = name;
+      if (writable) {
+        writable = null; // the merge closed it
+        toast(`Saved in your “${esc(takesDir.name)}” folder as <b>${esc(filename)}</b>${parts.length > 1 ? `, with your ${parts.length} kept sections` : ""}.`, null, 9000);
+      } else {
+        const a = document.createElement("a"), url = URL.createObjectURL(out.blob);
+        a.href = url; a.download = filename; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+        toast(`Downloaded <b>${esc(filename)}</b>${parts.length > 1 ? `, with your ${parts.length} kept sections` : ""}.`, null, 9000);
+      }
+      t.merged = filename;
+    } catch (e) {
+      if (writable) { await writable.abort().catch(() => {}); await takesDir?.removeEntry(name).catch(() => {}); }
+      toast("Couldn't make the video: " + esc(e.message || String(e)), null, 9000);
+    }
+    merging = null; mergeUi(t);
+  }
+  function pickMergeFile(t) {
+    const i = document.createElement("input"); i.type = "file"; i.accept = "video/*";
+    i.onchange = () => { if (i.files[0]) mergeTake(t, i.files[0]); };
+    i.click();
+  }
+
   let reviewing = null;
   const reviewAudio = new Audio();
   // A narration plays back as the original video (muted) with the recorded voice kept in step with it.
@@ -1912,7 +1981,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#rv-meta").textContent = `${clock(t.dur)}${t.flubs.length ? ` · ${t.flubs.length} flub${t.flubs.length > 1 ? "s" : ""} marked` : ""}`;
     const off = t.narration ? t.narration.startMs / 1000 : 0;
     $("#rv-flubs").innerHTML = t.flubs.map((f, i) => `<button data-seek="${Math.max(0, off + f.ms / 1000 - 3)}" title="Jump to just before it">⚑ ${clock(f.ms)}</button>`).join("");
-    reviewWhere(t); enhanceUi(t);
+    reviewWhere(t); enhanceUi(t); mergeUi(t);
     $("#review").classList.add("open"); wake();
   }
   function reviewWhere(t) {
@@ -1931,12 +2000,13 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#takes").innerHTML = takes.map(t => `<div class="take${t.saved ? " saved" : ""}" data-take="${t.id}">
       <button class="star${t.kept ? " on" : ""}" data-take-star title="${t.kept ? "Keeper" : "Mark as a keeper"}">${t.kept ? "★" : "☆"}</button>
       <span class="tt">${t.narration ? "Narration" : "Take"} ${t.n}${t.narration?.section ? ` · section ${t.narration.section.n}` : ""} · ${esc(t.title)}<small>${clock(t.dur)}${t.flubs.length ? ` · ${t.flubs.length} ⚑` : ""}</small></span>
-      <button data-take-play>Review</button><button class="dl" data-take-dl>${t.inFolder ? "In folder ✓" : t.saved ? "Saved ✓" : "Download"}</button><button data-take-del aria-label="Delete take">✕</button></div>`).join("");
+      <button data-take-play>Review</button>${t.narration ? `<button data-take-merge title="Save the video with this voice on it">Video</button>` : ""}<button class="dl" data-take-dl>${t.inFolder ? "In folder ✓" : t.saved ? "Saved ✓" : "Download"}</button><button data-take-del aria-label="Delete take">✕</button></div>`).join("");
   }
   $("#takes").addEventListener("click", e => {
     const row = e.target.closest("[data-take]"); if (!row) return;
     const t = takes.find(t => t.id === +row.dataset.take);
     if (e.target.closest("[data-take-play]")) { closeDrawers(); openReview(t); }
+    else if (e.target.closest("[data-take-merge]")) { closeDrawers(); mergeTake(t); }
     else if (e.target.closest("[data-take-dl]")) { if (!t.inFolder) downloadTake(t); }
     else if (e.target.closest("[data-take-star]")) { if (t.kept) { t.kept = false; takeApi(t, "PUT", { kept: false }); renderTakes(); } else keepTake(t); }
     else if (e.target.closest("[data-take-del]")) {
@@ -2682,7 +2752,9 @@ The reply includes a "url" — share it with me.`;
     "edit-done": finishInlineEdit,
     "edit-cancel": cancelInlineEdit,
     "takes-folder": pickFolder,
-    "rv-keep": () => { if (reviewing) keepTake(reviewing); closeReview(); },
+    "rv-keep": () => { const t = reviewing; if (t) keepTake(t); closeReview(); if (t?.narration && !t.merged && !merging) toast("Kept. Want the video with your voice on it?", () => mergeTake(t), 9000, "Save video"); },
+    "rv-merge": () => { if (reviewing) mergeTake(reviewing); },
+    "rv-bed": () => { S.mergeSound = !S.mergeSound; save(); mergeUi(reviewing); },
     "rv-discard": () => { if (reviewing && confirm("Discard this take?" + (reviewing.inFolder ? " The file is removed from your folder too." : ""))) { discardTake(reviewing); closeReview(); } },
     "rv-retake": () => { const sn = reviewing?.narration?.section; closeReview(); if (sn && timed()) { narrSec = sn.n - 1; syncSections(); } else restart(); startRec(); },
     "rv-next": () => { const sn = reviewing?.narration?.section; if (reviewing) keepTake(reviewing); closeReview(); if (sn) goToSection(sn.n); },

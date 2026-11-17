@@ -55,6 +55,10 @@ Each inbox gets 30 minutes of audio a day (UTC), counted in `autotime_usage`.
 
 Each narration take is cleaned up right after you record it, in your browser: rumble is cut, background noise is removed with [RNNoise](https://github.com/xiph/rnnoise) (the WebAssembly build from [@shiguredo/rnnoise-wasm](https://github.com/shiguredo/rnnoise-wasm), Apache 2.0, in `app/vendor/`), the voice gets a gentle EQ and de-ess, its level is evened out, and the result is set to -16 LUFS with peaks under -1 dBFS. It saves as a 48 kHz WAV beside your original, which is always kept. The review's "Hearing: enhanced / original" button switches between them, and Hear take plays whichever you picked. Turn it off with "Enhance narration audio" in Settings. Nothing is uploaded.
 
+### The video with your voice on it
+
+**Save video with voice** on the review screen (or the Video button beside a take, or the prompt after Keep) makes a copy of the video with your voice laid in where you recorded it. The picture is copied untouched, so there is no quality loss and a five-minute film takes a few seconds. "Video's sound" chooses whether the copy keeps the video's own sound under your voice or has your voice alone. If you recorded a section at a time, every kept section goes in. It all happens in the browser (`app/merge.js`, using [Mediabunny](https://mediabunny.dev)); with a takes folder chosen the file is written straight there, otherwise it downloads. A linked video can only be copied if its host allows it; if not, Prompter asks you for the same file from your computer.
+
 ### A video from a link
 
 The narrate button also takes a link, as long as it points straight at a video file (one ending in `.mp4`, say) that opens without signing in. A YouTube or Vimeo page won't work. Prompter offers to keep the link with the script, as a paragraph of its own:

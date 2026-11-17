@@ -39,7 +39,8 @@ export class AutoTimeError extends Error { status: number; constructor(msg: stri
 // ---------- speech-to-text ----------
 
 export async function transcribe(env: Env & { GROQ_API_KEY?: string }, inbox: string, src: { file?: Blob; filename?: string; url?: string; seconds?: number }): Promise<Heard> {
-  if (!env.GROQ_API_KEY) throw new AutoTimeError("Auto-timing isn't switched on for this Prompter yet.", 503);
+  const groqKey = (env.GROQ_API_KEY || "").trim();
+  if (!groqKey) throw new AutoTimeError("Auto-timing isn't switched on for this Prompter yet.", 503);
   const used = await secondsUsed(env, inbox);
   const left = DAILY_SECONDS - used;
   if (left <= 0 || (src.seconds && src.seconds > left))
@@ -53,10 +54,11 @@ export async function transcribe(env: Env & { GROQ_API_KEY?: string }, inbox: st
   if (src.file) form.append("file", src.file, src.filename || "audio.wav");
   else if (src.url) form.append("url", src.url);
   else throw new AutoTimeError("Send the video's audio or a link to the video.");
-  const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST", headers: { authorization: `Bearer ${env.GROQ_API_KEY}` }, body: form });
+  const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST", headers: { authorization: `Bearer ${groqKey}` }, body: form });
   if (!r.ok) {
     const detail = (await r.text()).slice(0, 300);
     if (r.status === 429) throw new AutoTimeError("The speech service is busy. Try again in a minute.", 429);
+    if (r.status === 401 || r.status === 403) throw new AutoTimeError("Auto-timing isn't working right now: the speech service didn't accept this Prompter's key.", 503);
     throw new AutoTimeError(src.url && r.status === 400 ? "Couldn't hear that video. The link has to open without signing in." : `The speech service said no (${r.status}): ${detail}`, 502);
   }
   const o: any = await r.json();

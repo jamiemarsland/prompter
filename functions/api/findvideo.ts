@@ -34,8 +34,13 @@ export async function GET(request: Request, { env }: Ctx) {
   let found: string | null = null;
   const frag = decodeURIComponent(page.hash.slice(1));
   if (frag) {
-    const at = html.search(new RegExp(`\\bid\\s*=\\s*["']${frag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`));
-    if (at >= 0) found = firstVideo(html.slice(at, at + 20000));
+    const f = frag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // The element with that id; else a tab panel for it (data-tab, panel-<id>, or the panel a tab's aria-controls names).
+    const tab = html.match(new RegExp(`href\\s*=\\s*["']#${f}["'][^>]*aria-controls\\s*=\\s*["']([^"']+)["']`, "i"));
+    for (const re of [`\\bid\\s*=\\s*["']${f}["']`, `\\bdata-[a-z-]+\\s*=\\s*["']${f}["']`, ...(tab ? [`\\bid\\s*=\\s*["']${tab[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`] : []), `\\bid\\s*=\\s*["'][a-z]+-${f}["']`]) {
+      const at = html.search(new RegExp(re, "i"));
+      if (at >= 0 && (found = firstVideo(html.slice(at, at + 20000)))) break;
+    }
   }
   if (!found) {
     const og = html.match(/<meta[^>]+property\s*=\s*["']og:video(?::(?:secure_)?url)?["'][^>]*content\s*=\s*["']([^"']+)["']/i)

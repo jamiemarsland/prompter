@@ -9,3 +9,7 @@ Text that adapts as you speak about a subject, rather than a script written in a
 1. **Talking points.** Done. Your AI sends a bullet list instead of a script. In voice mode Prompter shows one point at a time, ticks it off as you talk about it, and moves on when you start the next one.
 2. **"Stuck?" nudges.** If you pause for a couple of seconds, Prompter suggests a short next line from what you've said so far. This is the first step that needs AI built into Prompter.
 3. **Fully live text.** Prompts written as you go, if steps 1 and 2 show people want it.
+
+## A phone version
+
+A version that works really well on a phone, for the teleprompter part only: open a script, read it, voice following or steady scroll, record yourself. The newer, more involved features (narrating over a video, timed sections, Auto-time, saving the video with your voice) can probably stay on the computer.

@@ -22,7 +22,7 @@ const TOOLS = [
       type: "object",
       properties: {
         title: { type: "string", description: "Short title shown in the script library, e.g. 'Episode 12 intro'." },
-        text: { type: "string", description: "The full script, written to be read aloud. For talking points, one \"- \" line per point instead. For a voiceover over a video, start each paragraph with where it belongs in the video, as [m:ss] or [m:ss-m:ss] (for example [0:36-1:08]); the user then records one section at a time against the picture. A bare [m:ss] inside a paragraph is a pace mark for the words after it." },
+        text: { type: "string", description: "The full script, written to be read aloud. For talking points, one \"- \" line per point instead. For a voiceover over a video, start each paragraph with where it belongs in the video, as [m:ss] or [m:ss-m:ss] (for example [0:36-1:08]); the prompter keeps the words in time with the picture while the user records. A bare [m:ss] inside a paragraph is a pace mark for the words after it." },
         video_url: { type: "string", description: "Optional. A public link straight to a video file (for example one ending in .mp4) that this script is a voiceover for. The prompter loads it above the script so the user can record against the picture. It must open without signing in; a YouTube or Vimeo page will not work." },
       },
       required: ["title", "text"],

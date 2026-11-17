@@ -534,7 +534,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
 </div>
 <div id="narr-wrap" hidden>
   <video id="narr-video" muted playsinline preload="auto"></video>
-  <div class="narr-bar"><span id="narr-name"></span><span id="narr-sec" hidden><button data-act="sec-prev" title="Previous section ([)" aria-label="Previous section">‹</button><b id="narr-sec-label"></b><button data-act="sec-next" title="Next section (])" aria-label="Next section">›</button><button data-act="sec-roll" id="narr-roll" title="Stop at the end of each section, or keep recording into the next ones"></button></span><button data-act="narr-play" id="narr-play" title="Watch the video without recording (P)">▶ Play</button><span id="narr-time">0:00</span><button data-act="narr-sound" id="narr-sound" title="Hear the video's own sound while you record (wear headphones)">Sound off</button><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
+  <div class="narr-bar"><span id="narr-name"></span><span id="narr-sec" hidden><button data-act="sec-prev" title="Previous section ([)" aria-label="Previous section">‹</button><b id="narr-sec-label"></b><button data-act="sec-next" title="Next section (])" aria-label="Next section">›</button></span><button data-act="narr-play" id="narr-play" title="Watch the video without recording (P)">▶ Play</button><span id="narr-time">0:00</span><button data-act="narr-sound" id="narr-sound" title="Hear the video's own sound while you record (wear headphones)">Sound off</button><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
 </div>
 <input type="file" id="narr-file" accept="video/*" hidden>
 <div id="narr-menu" class="glass" role="menu" hidden>
@@ -795,7 +795,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   }
   let points = []; // { el, from, to, keys } while the script is talking points
   // Timed sections: a paragraph that starts with a time like [0:36] or [0:36-1:08] belongs at that point in a video.
-  // Narration mode then records one section at a time. A time in the middle of a paragraph, like [0:41], is a pace mark.
+  // Narration mode counts you in and records from there to the end. A time in the middle of a paragraph, like [0:41], is a pace mark.
   const TIME = "(\\d+):(\\d\\d(?:\\.\\d+)?)";
   const SEC_CUE = new RegExp(`^\\[${TIME}(?:\\s*[-–]\\s*${TIME})?\\]`), PACE_CUE = new RegExp(`^\\[${TIME}\\]$`);
   const tsec = (m, sec) => +m * 60 + +sec;
@@ -831,6 +831,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
           if (part.startsWith("[") && part.endsWith("]")) {
             const pm = sec && words.length > sec.from && part.match(PACE_CUE);
             if (pm) { sec.marks.push([words.length, tsec(pm[1], pm[2])]); out += `<span class="cue tmark">${esc(part)}</span> `; continue; }
+            if (sec && words.length === sec.from && SEC_CUE.test(part)) { out += `<span class="cue tmark">${esc(part)}</span> `; continue; } // the section's time: hidden unless editing
             out += `<span class="cue">${esc(part)}</span> `; continue;
           }
           for (const tok of part.split(/\s+/)) {
@@ -1247,21 +1248,19 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#record").title = "Record narration (R)";
     applyNarrSound(); narrSec = 0; syncSections();
     requestAnimationFrame(() => { measure(); if (timed()) goToSection(0); else placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
-    toast(timed() ? `This script has ${sections.length} timed sections. Record does one at a time, with a count-in. [ and ] move between them.`
+    toast(timed() ? `This script is timed to the video. Record counts you in and runs to the end. [ and ] pick where to start.`
       : "Press Record to narrate. The video plays muted and only your voice is recorded.", null, 6000);
   }
   // ---------- Timed sections ----------
-  const NARR_PRE = 3, NARR_TAIL = 2; // seconds of picture before the cue, and of room after a section's end
+  const NARR_PRE = 3; // seconds of count-in shown against the picture before a cue
   const timed = () => !!narr && sections.length > 0;
   // Where a section's recording stops: a beat after its own end, or where the next section starts.
-  const secStop = i => (sections[i].end != null ? sections[i].end + NARR_TAIL : sections[i + 1] ? sections[i + 1].start : Infinity);
   function syncSections() {
     const on = timed();
     $("#narr-sec").hidden = !on; document.body.classList.toggle("timed", on);
     if (!on) return;
     narrSec = Math.max(0, Math.min(sections.length - 1, narrSec));
     $("#narr-sec-label").textContent = `${narrSec + 1} of ${sections.length} · ${clock(sections[narrSec].start * 1000)}`;
-    $("#narr-roll").textContent = S.narrRoll ? "Keeps rolling" : "One section";
     sections.forEach((sc, k) => sc.el?.classList.toggle("sec-current", k === narrSec));
   }
   function goToSection(i) {
@@ -1269,7 +1268,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
     if (playing) pause();
     narrSec = Math.max(0, Math.min(sections.length - 1, i));
-    narrVideo.pause(); narrVideo.currentTime = Math.max(0, sections[narrSec].start - NARR_PRE);
+    narrVideo.pause(); narrVideo.currentTime = Math.max(0, sections[narrSec].start - 0.15);
     placeAt(sections[narrSec].from); syncSections();
   }
   function applyNarrSound() {
@@ -1287,10 +1286,9 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
         if (left <= 0) { secRun.started = true; $("#countdown").classList.remove("show"); if (words.length) { placeAt(sections[secRun.i].from); play({ now: true }); } }
         else if (Math.ceil(left) !== secRun.n && left <= NARR_PRE) popCount((secRun.n = Math.ceil(left)));
       }
-      if (S.narrRoll) {
-        let k = secRun.i; while (sections[k + 1] && t >= sections[k + 1].start - 0.3) k++;
-        if (k !== secRun.i) { secRun.i = narrSec = k; syncSections(); }
-      } else if (t >= secStop(secRun.i)) stopRec();
+      // Recording runs on through every section until the video ends or you stop it.
+      let k = secRun.i; while (sections[k + 1] && t >= sections[k + 1].start - 0.3) k++;
+      if (k !== secRun.i) { secRun.i = narrSec = k; syncSections(); }
     }
     if (previewing && timed() && !narrVideo.paused) {
       // Watching: the script keeps up with the picture, section by section.
@@ -1322,7 +1320,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#record").title = "Record narration (R)";
     applyNarrSound(); narrSec = 0; syncSections();
     requestAnimationFrame(() => { measure(); if (timed()) goToSection(0); else placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
-    if (!fromScript) toast(timed() ? `This script has ${sections.length} timed sections. Record does one at a time, with a count-in.` : "Press Record to narrate. Only your voice is recorded.", null, 5000);
+    if (!fromScript) toast(timed() ? `This script is timed to the video. Record counts you in and runs to the end.` : "Press Record to narrate. Only your voice is recorded.", null, 5000);
   }
   narrVideo.addEventListener("error", () => {
     if (!narr?.remote) return;
@@ -1446,7 +1444,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     if (timed()) {
       // Back up a few seconds before the cue and wait for the picture to get there, so the voice lines up with it.
       narrTakeSec = narrSec; syncSections();
-      const from = Math.max(0, sections[narrSec].start - NARR_PRE);
+      const from = Math.max(0, sections[narrSec].start - 0.15);
       narrVideo.pause();
       if (Math.abs(narrVideo.currentTime - from) > 0.05) {
         await new Promise(res => { narrVideo.addEventListener("seeked", res, { once: true }); setTimeout(res, 1500); narrVideo.currentTime = from; });
@@ -1481,7 +1479,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       if (words.length && !secRun) play({ now: true }); // a timed section starts the script on its cue instead
       startLog();
     };
-    if (S.countdown && narrTakeSec == null) {
+    if (narr || (S.countdown && narrTakeSec == null)) {
       let n = 3; const cd = $("#countdown");
       $("#record").classList.add("on");
       const step = () => {
@@ -2395,7 +2393,6 @@ The reply includes a "url" — share it with me.`;
     "narr-close": closeNarration,
     "sec-prev": () => goToSection(narrSec - 1),
     "sec-next": () => goToSection(narrSec + 1),
-    "sec-roll": () => { S.narrRoll = !S.narrRoll; save(); syncSections(); toast(S.narrRoll ? "Recording keeps going into the next sections until you stop." : "Recording stops at the end of each section.", null, 3500); },
     "narr-play": () => togglePreview(),
     "narr-sound": () => { S.narrSound = !S.narrSound; save(); applyNarrSound(); if (S.narrSound) toast("Wear headphones, so the video's sound isn't recorded with your voice.", null, 4500); },
     flub: markFlub,

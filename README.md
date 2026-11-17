@@ -58,7 +58,7 @@ Start a paragraph with where it belongs in the video and it becomes a section:
 - `[m:ss]` or `[m:ss-m:ss]` at the start of a paragraph is the section's cue, and its end if you give one.
 - `[m:ss]` inside a paragraph is a pace mark: the words after it are due at that moment.
 
-With a video loaded, Record does one section at a time. It backs the video up three seconds, counts you in against the picture, starts the script on the cue and stops two seconds after the section's end (or where the next one starts). A thin underline moves through the words to show where the picture expects you to be, and in Steady mode the script scrolls at that pace. `[` and `]` move between sections, "One section" switches to recording straight through, and "Sound" plays the video's own audio (wear headphones). Each take's file name, notes file and `get_take` details say which section it is.
+With a video loaded, Record counts you in 3, 2, 1 and starts the video on the section you are at, then keeps recording to the end of the video (or until you stop). The times stay out of sight on the prompter and show while you edit. A thin underline moves through the words to show where the picture expects you to be, and in Steady mode the script scrolls at that pace. `[` and `]` choose which section to start from, and "Sound" plays the video's own audio (wear headphones). Each take's file name, notes file and `get_take` details say which section it starts at.
 
 ## Remix it
 

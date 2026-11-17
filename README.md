@@ -33,6 +33,21 @@ Send a list with one `- ` line per point instead of a script, and Prompter treat
 
 Drop a video onto Prompter (or press the narrate button) to record a voiceover for it. The video plays muted above the script while only your voice is recorded, with voice following, talking points and flub markers working as usual. You review it as the video with your new voice over it. The audio saves to your takes folder with a `.json` notes file saying which video it belongs to and where in it the voice starts, and your AI gets the same details through `get_take`. The video never leaves your computer.
 
+### Timed sections
+
+Start a paragraph with where it belongs in the video and it becomes a section:
+
+```
+[0:00-0:31] I asked for a better-looking cycling game. [0:14] Make it rain.
+
+[0:36-1:08] To explain, we go back two days.
+```
+
+- `[m:ss]` or `[m:ss-m:ss]` at the start of a paragraph is the section's cue, and its end if you give one.
+- `[m:ss]` inside a paragraph is a pace mark: the words after it are due at that moment.
+
+With a video loaded, Record does one section at a time. It backs the video up three seconds, counts you in against the picture, starts the script on the cue and stops two seconds after the section's end (or where the next one starts). A thin underline moves through the words to show where the picture expects you to be, and in Steady mode the script scrolls at that pace. `[` and `]` move between sections, "One section" switches to recording straight through, and "Sound" plays the video's own audio (wear headphones). Each take's file name, notes file and `get_take` details say which section it is.
+
 ## Remix it
 
 Get your own copy running on Spacefast in one click, with its own database and inboxes:

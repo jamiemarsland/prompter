@@ -22,7 +22,7 @@ const TOOLS = [
       type: "object",
       properties: {
         title: { type: "string", description: "Short title shown in the script library, e.g. 'Episode 12 intro'." },
-        text: { type: "string", description: "The full script, written to be read aloud. For talking points, one \"- \" line per point instead." },
+        text: { type: "string", description: "The full script, written to be read aloud. For talking points, one \"- \" line per point instead. For a voiceover over a video, start each paragraph with where it belongs in the video, as [m:ss] or [m:ss-m:ss] (for example [0:36-1:08]); the user then records one section at a time against the picture. A bare [m:ss] inside a paragraph is a pace mark for the words after it." },
       },
       required: ["title", "text"],
     },

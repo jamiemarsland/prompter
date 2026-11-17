@@ -147,6 +147,12 @@ body.points.dim-spoken .w.spoken { color: inherit; }
 #narr-wrap .narr-bar button { height: 26px; padding: 0 9px; border: 0; border-radius: 8px; background: rgba(255,255,255,.16); color: #fff; font: inherit; cursor: pointer; }
 body.narrating { --guide: 16%; --guide-vh: calc((100vh - 68px - 38vh) * .16); }
 body.narrating #stage { top: calc(68px + 38vh); }
+/* Timed sections: the paragraph being narrated stays bright, and a thin underline shows where the picture expects you to be. */
+#narr-sec { display: flex; gap: 6px; align-items: center; }
+#narr-sec b { font-weight: 600; font-variant-numeric: tabular-nums; padding: 0 4px; white-space: nowrap; }
+body.timed #text p[data-sec] { opacity: .45; transition: opacity .25s; }
+body.timed #text p.sec-current { opacity: 1; }
+.w.pace { box-shadow: 0 .1em 0 var(--accent); }
 #drop-hint { position: fixed; inset: 12px; z-index: 95; border: 2px dashed var(--accent); border-radius: 20px; display: grid; place-items: center;
   font-size: 22px; font-weight: 600; background: rgba(0,0,0,.65); color: #fff; opacity: 0; pointer-events: none; transition: opacity .2s; }
 body.dragging #drop-hint { opacity: 1; }
@@ -520,7 +526,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
 </div>
 <div id="narr-wrap" hidden>
   <video id="narr-video" muted playsinline preload="auto"></video>
-  <div class="narr-bar"><span id="narr-name"></span><span id="narr-time">0:00</span><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
+  <div class="narr-bar"><span id="narr-name"></span><span id="narr-sec" hidden><button data-act="sec-prev" title="Previous section ([)" aria-label="Previous section">‹</button><b id="narr-sec-label"></b><button data-act="sec-next" title="Next section (])" aria-label="Next section">›</button><button data-act="sec-roll" id="narr-roll" title="Stop at the end of each section, or keep recording into the next ones"></button></span><span id="narr-time">0:00</span><button data-act="narr-sound" id="narr-sound" title="Hear the video's own sound while you record (wear headphones)">Sound off</button><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
 </div>
 <input type="file" id="narr-file" accept="video/*" hidden>
 <div id="drop-hint">Drop a video to narrate over it</div>
@@ -670,6 +676,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       <button class="btn" data-act="rv-discard">Discard</button>
       <button class="btn solid" data-act="rv-retake">Retake</button>
       <button class="btn primary" data-act="rv-keep" style="height:44px">★ Keep</button>
+      <button class="btn primary" data-act="rv-next" id="rv-next" style="height:44px" hidden>★ Keep, next section</button>
     </div>
     <div class="flubs" id="rv-flubs"></div>
     <p class="muted rv-where" id="rv-where"></p>
@@ -773,9 +780,16 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     return bullets >= 2 && bullets >= lines.length * 0.6;
   }
   let points = []; // { el, from, to, keys } while the script is talking points
+  // Timed sections: a paragraph that starts with a time like [0:36] or [0:36-1:08] belongs at that point in a video.
+  // Narration mode then records one section at a time. A time in the middle of a paragraph, like [0:41], is a pace mark.
+  const TIME = "(\\d+):(\\d\\d(?:\\.\\d+)?)";
+  const SEC_CUE = new RegExp(`^\\[${TIME}(?:\\s*[-–]\\s*${TIME})?\\]`), PACE_CUE = new RegExp(`^\\[${TIME}\\]$`);
+  const tsec = (m, sec) => +m * 60 + +sec;
+  let sections = []; // { el, from, to, start, end, pace } in seconds of video time
+  let narrSec = 0, secRun = null, narrTakeSec = null, paceEl = null, paceIdx = null;
   function render(body, { animate = true } = {}) {
     words = [];
-    const html = [];
+    const html = [], secs = [];
     const asPoints = isPoints(body);
     body = body.replace(/\r\n?/g, "\n");
     // Each point is its own paragraph, even when the list has no blank lines between items.
@@ -787,13 +801,19 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       const isPoint = asPoints && p.startsWith("\u2063");
       p = p.replace(/^\u2063/, "");
       if (/^#{1,6}\s/.test(p)) { html.push(`<h2>${esc(p.replace(/^#+\s*/, "").replace(/\*+/g, ""))}</h2>`); continue; }
+      const sm = asPoints ? null : p.match(SEC_CUE);
+      const sec = sm ? { start: tsec(sm[1], sm[2]), end: sm[3] != null ? tsec(sm[3], sm[4]) : null, from: words.length, marks: [] } : null;
       let out = "", inBold = false;
       const lines = p.split("\n");
       lines.forEach((line, li) => {
         for (const part of line.split(/(\[[^\]]*\]|\/\/)/)) {
           if (!part) continue;
           if (part === "//") { out += `<span class="pause" title="Breath"></span> `; continue; }
-          if (part.startsWith("[") && part.endsWith("]")) { out += `<span class="cue">${esc(part)}</span> `; continue; }
+          if (part.startsWith("[") && part.endsWith("]")) {
+            const pm = sec && words.length > sec.from && part.match(PACE_CUE);
+            if (pm) { sec.marks.push([words.length, tsec(pm[1], pm[2])]); continue; } // pace marks steer the timing but aren't shown
+            out += `<span class="cue">${esc(part)}</span> `; continue;
+          }
           for (const tok of part.split(/\s+/)) {
             if (!tok) continue;
             const n = norm(tok.replace(/\*+/g, ""));
@@ -809,7 +829,8 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
         }
         if (li < lines.length - 1) out += "<br>";
       });
-      html.push(isPoint ? `<p class="point">${out}</p>` : `<p>${out}</p>`);
+      if (sec && words.length > sec.from) { sec.to = words.length - 1; html.push(`<p data-sec="${secs.length}">${out}</p>`); secs.push(sec); }
+      else html.push(isPoint ? `<p class="point">${out}</p>` : `<p>${out}</p>`);
     }
     textEl.innerHTML = html.join("");
     textEl.classList.remove("enter");
@@ -819,6 +840,15 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       const ws = $$(".w", el);
       return ws.length ? { el, from: +ws[0].dataset.i, to: +ws[ws.length - 1].dataset.i, keys: keyWords(ws.map(w => words[+w.dataset.i].norm), ws.map(w => w.textContent)) } : null;
     }).filter(Boolean);
+    sections = secs; paceEl = null; paceIdx = null;
+    sections.forEach((sc, k) => {
+      sc.el = $(`p[data-sec="${k}"]`, textEl);
+      // Word index against video time: the section's start, any pace marks, and its end when one is given.
+      const pts = [[sc.from, sc.start], ...sc.marks.filter(([w, t]) => t > sc.start && (sc.end == null || t < sc.end))];
+      if (sc.end != null) pts.push([sc.to + 1, sc.end]);
+      sc.pace = pts.length > 1 ? pts : null;
+    });
+    syncSections();
     document.body.classList.toggle("points", points.length > 0);
     document.body.classList.toggle("has-script", words.length > 0);
     cursor = 0; pos = 0; scroller.scrollTop = 0;
@@ -923,8 +953,13 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   function tick() {
     const t = performance.now(); // not the frame's own timestamp: each window counts from a different start
     const dt = Math.min(0.1, (t - lastT) / 1000 || 0); lastT = t;
+    narrTick();
     if (playing) {
-      if (S.mode === "auto") {
+      if (S.mode === "auto" && secRun && paceIdx != null) {
+        // Steady mode keeps time with the picture while a timed section is being recorded.
+        const d = Math.max(0, Math.min(maxPos, targetFor(paceIdx))) - pos;
+        pos += d * Math.min(1, dt * 3.2); setScroll(pos); markSpoken();
+      } else if (S.mode === "auto") {
         pos = Math.min(maxPos, pos + pxPerSec() * dt);
         setScroll(pos); markSpoken();
         if (pos >= maxPos) wrap();
@@ -1186,13 +1221,67 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#narr-name").textContent = file.name; $("#narr-wrap").hidden = false;
     document.body.classList.add("narrating");
     $("#record").title = "Record narration (R)";
-    requestAnimationFrame(() => { measure(); placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
-    toast("Press Record to narrate. The video plays muted and only your voice is recorded.", null, 5000);
+    applyNarrSound(); narrSec = 0; syncSections();
+    requestAnimationFrame(() => { measure(); if (timed()) goToSection(0); else placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
+    toast(timed() ? `This script has ${sections.length} timed sections. Record does one at a time, with a count-in. [ and ] move between them.`
+      : "Press Record to narrate. The video plays muted and only your voice is recorded.", null, 6000);
+  }
+  // ---------- Timed sections ----------
+  const NARR_PRE = 3, NARR_TAIL = 2; // seconds of picture before the cue, and of room after a section's end
+  const timed = () => !!narr && sections.length > 0;
+  // Where a section's recording stops: a beat after its own end, or where the next section starts.
+  const secStop = i => (sections[i].end != null ? sections[i].end + NARR_TAIL : sections[i + 1] ? sections[i + 1].start : Infinity);
+  function syncSections() {
+    const on = timed();
+    $("#narr-sec").hidden = !on; document.body.classList.toggle("timed", on);
+    if (!on) return;
+    narrSec = Math.max(0, Math.min(sections.length - 1, narrSec));
+    $("#narr-sec-label").textContent = `${narrSec + 1} of ${sections.length} · ${clock(sections[narrSec].start * 1000)}`;
+    $("#narr-roll").textContent = S.narrRoll ? "Keeps rolling" : "One section";
+    sections.forEach((sc, k) => sc.el?.classList.toggle("sec-current", k === narrSec));
+  }
+  function goToSection(i) {
+    if (!timed()) return;
+    if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
+    if (playing) pause();
+    narrSec = Math.max(0, Math.min(sections.length - 1, i));
+    narrVideo.pause(); narrVideo.currentTime = Math.max(0, sections[narrSec].start - NARR_PRE);
+    placeAt(sections[narrSec].from); syncSections();
+  }
+  function applyNarrSound() {
+    narrVideo.muted = !S.narrSound; narrVideo.volume = 0.6;
+    $("#narr-sound").textContent = S.narrSound ? "Sound on" : "Sound off";
+  }
+  const popCount = n => { const cd = $("#countdown"); cd.textContent = n; cd.classList.remove("show"); void cd.offsetWidth; cd.classList.add("show"); };
+  // Runs every frame: counts you in against the picture, starts the script on the cue, stops at the section's end, and moves the pace mark.
+  function narrTick() {
+    if (!narr) return;
+    const t = narrVideo.currentTime;
+    if (secRun && recorder) {
+      if (!secRun.started) {
+        const left = sections[secRun.i].start - t;
+        if (left <= 0) { secRun.started = true; $("#countdown").classList.remove("show"); if (words.length) { placeAt(sections[secRun.i].from); play({ now: true }); } }
+        else if (Math.ceil(left) !== secRun.n && left <= NARR_PRE) popCount((secRun.n = Math.ceil(left)));
+      }
+      if (S.narrRoll) {
+        let k = secRun.i; while (sections[k + 1] && t >= sections[k + 1].start - 0.3) k++;
+        if (k !== secRun.i) { secRun.i = narrSec = k; syncSections(); }
+      } else if (t >= secStop(secRun.i)) stopRec();
+    }
+    let i = null;
+    const sc = timed() && !narrVideo.paused ? sections[secRun ? secRun.i : narrSec] : null, pc = sc?.pace;
+    if (pc && t >= pc[0][1] && t < pc[pc.length - 1][1]) {
+      let k = 0; while (k < pc.length - 2 && t >= pc[k + 1][1]) k++;
+      i = Math.min(sc.to, Math.floor(pc[k][0] + (pc[k + 1][0] - pc[k][0]) * (t - pc[k][1]) / Math.max(0.001, pc[k + 1][1] - pc[k][1])));
+    }
+    paceIdx = i;
+    const el = i == null ? null : words[i]?.el;
+    if (el !== paceEl) { paceEl?.classList.remove("pace"); el?.classList.add("pace"); paceEl = el; }
   }
   function closeNarration() {
     if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
     narrVideo.pause(); narrVideo.removeAttribute("src"); narrVideo.load();
-    narr = null; $("#narr-wrap").hidden = true; document.body.classList.remove("narrating");
+    narr = null; $("#narr-wrap").hidden = true; document.body.classList.remove("narrating"); syncSections();
     $("#record").title = "Record yourself (R)";
     requestAnimationFrame(() => { measure(); placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
   }
@@ -1266,11 +1355,23 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     if (takesDir && !(await folderReady())) toast("No access to your takes folder, so takes will download instead.", null, 4000);
     if (narr ? !(await startMic()) : !(await startCam())) return;
     if (playing) pause();
+    narrTakeSec = null;
+    if (timed()) {
+      // Back up a few seconds before the cue and wait for the picture to get there, so the voice lines up with it.
+      narrTakeSec = narrSec; syncSections();
+      const from = Math.max(0, sections[narrSec].start - NARR_PRE);
+      narrVideo.pause();
+      if (Math.abs(narrVideo.currentTime - from) > 0.05) {
+        await new Promise(res => { narrVideo.addEventListener("seeked", res, { once: true }); setTimeout(res, 1500); narrVideo.currentTime = from; });
+      }
+      placeAt(sections[narrSec].from);
+    }
     const begin = () => {
       recCountdown = null;
       if (narr) {
         // From the top unless you've moved the video on; the start point is saved so an editor can line the voice up.
-        if (narrVideo.ended || narrVideo.currentTime >= (narrVideo.duration || Infinity) - 0.5) narrVideo.currentTime = 0;
+        if (narrTakeSec != null) secRun = { i: narrTakeSec, started: false, n: 0 };
+        else if (narrVideo.ended || narrVideo.currentTime >= (narrVideo.duration || Infinity) - 0.5) narrVideo.currentTime = 0;
         narrStartMs = Math.round(narrVideo.currentTime * 1000);
         try { recorder = new MediaRecorder(micStream, { mimeType: audioMime(), audioBitsPerSecond: 192_000 }); }
         catch { recorder = new MediaRecorder(micStream); }
@@ -1290,10 +1391,10 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
         $("#rec-pill span").textContent = clock(Date.now() - recStart);
         if (narr && narrVideo.ended && !narrEndTimer) narrEndTimer = setTimeout(() => { narrEndTimer = null; if (recorder) stopRec(); }, 600); // backup if "ended" was missed
       }, 250);
-      if (words.length) play({ now: true });
+      if (words.length && !secRun) play({ now: true }); // a timed section starts the script on its cue instead
       startLog();
     };
-    if (S.countdown) {
+    if (S.countdown && narrTakeSec == null) {
       let n = 3; const cd = $("#countdown");
       $("#record").classList.add("on");
       const step = () => {
@@ -1309,6 +1410,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     if (!recorder) return;
     if (playing) pause();
     recorder.stop(); recorder = null; clearInterval(logTimer);
+    secRun = null; $("#countdown").classList.remove("show");
     clearInterval(recTimer); $("#rec-pill").hidden = true;
     if (narr) narrVideo.pause();
     $("#record").classList.remove("on"); $("#record").title = narr ? "Record narration (R)" : "Record yourself (R)";
@@ -1378,12 +1480,13 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     const type = (recChunks[0]?.type || (audioOnly ? audioMime() : recMime()) || "video/webm").split(";")[0];
     const blob = new Blob(recChunks, { type });
     const title = current?.title || "Take", n = takes.length + 1;
+    const secOf = audioOnly && narr && narrTakeSec != null && sections[narrTakeSec] ? { n: narrTakeSec + 1, of: sections.length, cueMs: Math.round(sections[narrTakeSec].start * 1000) } : null;
     const ext = audioOnly ? (type.includes("mp4") ? "m4a" : "webm") : type.includes("mp4") ? "mp4" : "webm";
     const t = {
       id: Date.now(), n, title, dur: Date.now() - recStart, blob, url: URL.createObjectURL(blob), ext,
-      filename: `${title.replace(/[\\/:*?"<>|]+/g, "").slice(0, 60)} - ${audioOnly ? "narration" : "take"} ${n} - ${stamp(new Date(recStart))}.${ext}`,
+      filename: `${title.replace(/[\\/:*?"<>|]+/g, "").slice(0, 60)} - ${audioOnly ? "narration" : "take"} ${n}${secOf ? ` - section ${p2(secOf.n)}` : ""} - ${stamp(new Date(recStart))}.${ext}`,
       flubs, words: timeline, scriptId: current && !current.local ? current.id : null, saved: false, kept: false, remoteId: null, inFolder: false,
-      narration: audioOnly && narr ? { video: narr.name, videoUrl: narr.url, startMs: narrStartMs } : null,
+      narration: audioOnly && narr ? { video: narr.name, videoUrl: narr.url, startMs: narrStartMs, section: secOf } : null,
     };
     if (t.narration) stopMic();
     takes.push(t); renderTakes();
@@ -1401,7 +1504,9 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   async function writeNotes(t) {
     const fh = await takesDir.getFileHandle(t.filename.replace(/\.[^.]+$/, "") + ".json", { create: true });
     const w = await fh.createWritable();
+    const sc = t.narration.section;
     await w.write(JSON.stringify({ audio: t.filename, video: t.narration.video, video_start_ms: t.narration.startMs, duration_ms: t.dur,
+      ...(sc ? { section: sc.n, sections: sc.of, section_cue_ms: sc.cueMs } : {}),
       note: "Audio-only narration recorded while the video played muted. Place the audio at video_start_ms in the video. Flub and word times are from the start of the audio.",
       flubs: t.flubs, words: t.words }, null, 2));
     await w.close();
@@ -1413,7 +1518,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
       const r = await fetch("/api/takes", { method: "POST", headers: { authorization: "Bearer " + key, "content-type": "application/json" }, body: JSON.stringify({
         script_id: t.scriptId, title: t.title, n: t.n, filename: t.filename, folder: t.inFolder ? takesDir.name : null,
         duration_ms: t.dur, size: t.blob.size, kept: t.kept, flubs: t.flubs, words: t.words,
-        narration: t.narration && { video: t.narration.video, start_ms: t.narration.startMs },
+        narration: t.narration && { video: t.narration.video, start_ms: t.narration.startMs, section: t.narration.section?.n, sections: t.narration.section?.of, section_cue_ms: t.narration.section?.cueMs },
       }) });
       if (r.ok) t.remoteId = (await r.json()).id;
     } catch {} })());
@@ -1454,10 +1559,12 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     reviewing = t;
     const v = rv;
     if (t.narration) {
-      reviewAudio.src = t.url; v.muted = true; v.src = t.narration.videoUrl; v.currentTime = t.narration.startMs / 1000;
-    } else { reviewAudio.removeAttribute("src"); v.muted = false; v.src = t.url; v.currentTime = 0; }
+      reviewAudio.src = t.url; v.muted = !S.narrSound; v.volume = 0.6; v.src = t.narration.videoUrl; v.currentTime = t.narration.startMs / 1000;
+    } else { reviewAudio.removeAttribute("src"); v.muted = false; v.volume = 1; v.src = t.url; v.currentTime = 0; }
+    const sn = t.narration?.section;
+    $("#rv-next").hidden = !(sn && timed() && sn.n < sections.length);
     v.play().catch(() => {});
-    $("#rv-title").textContent = `${t.narration ? "Narration" : "Take"} ${t.n} · ${t.title}`;
+    $("#rv-title").textContent = `${t.narration ? "Narration" : "Take"} ${t.n}${sn ? ` · section ${sn.n} of ${sn.of}` : ""} · ${t.title}`;
     $("#rv-meta").textContent = `${clock(t.dur)}${t.flubs.length ? ` · ${t.flubs.length} flub${t.flubs.length > 1 ? "s" : ""} marked` : ""}`;
     const off = t.narration ? t.narration.startMs / 1000 : 0;
     $("#rv-flubs").innerHTML = t.flubs.map((f, i) => `<button data-seek="${Math.max(0, off + f.ms / 1000 - 3)}" title="Jump to just before it">⚑ ${clock(f.ms)}</button>`).join("");
@@ -1474,7 +1581,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#takes-box").hidden = !takes.length;
     $("#takes").innerHTML = takes.map(t => `<div class="take${t.saved ? " saved" : ""}" data-take="${t.id}">
       <button class="star${t.kept ? " on" : ""}" data-take-star title="${t.kept ? "Keeper" : "Mark as a keeper"}">${t.kept ? "★" : "☆"}</button>
-      <span class="tt">${t.narration ? "Narration" : "Take"} ${t.n} · ${esc(t.title)}<small>${clock(t.dur)}${t.flubs.length ? ` · ${t.flubs.length} ⚑` : ""}</small></span>
+      <span class="tt">${t.narration ? "Narration" : "Take"} ${t.n}${t.narration?.section ? ` · section ${t.narration.section.n}` : ""} · ${esc(t.title)}<small>${clock(t.dur)}${t.flubs.length ? ` · ${t.flubs.length} ⚑` : ""}</small></span>
       <button data-take-play>Review</button><button class="dl" data-take-dl>${t.inFolder ? "In folder ✓" : t.saved ? "Saved ✓" : "Download"}</button><button data-take-del aria-label="Delete take">✕</button></div>`).join("");
   }
   $("#takes").addEventListener("click", e => {
@@ -2196,6 +2303,10 @@ The reply includes a "url" — share it with me.`;
     narrate: () => $("#narr-file").click(),
     "narr-pick": () => $("#narr-file").click(),
     "narr-close": closeNarration,
+    "sec-prev": () => goToSection(narrSec - 1),
+    "sec-next": () => goToSection(narrSec + 1),
+    "sec-roll": () => { S.narrRoll = !S.narrRoll; save(); syncSections(); toast(S.narrRoll ? "Recording keeps going into the next sections until you stop." : "Recording stops at the end of each section.", null, 3500); },
+    "narr-sound": () => { S.narrSound = !S.narrSound; save(); applyNarrSound(); if (S.narrSound) toast("Wear headphones, so the video's sound isn't recorded with your voice.", null, 4500); },
     flub: markFlub,
     popout: popOut,
     "pip-mode": () => { setMode(S.mode === "voice" ? "auto" : "voice"); setPlayUi(); pipDiag(); },
@@ -2217,7 +2328,8 @@ The reply includes a "url" — share it with me.`;
     "takes-folder": pickFolder,
     "rv-keep": () => { if (reviewing) keepTake(reviewing); closeReview(); },
     "rv-discard": () => { if (reviewing && confirm("Discard this take?" + (reviewing.inFolder ? " The file is removed from your folder too." : ""))) { discardTake(reviewing); closeReview(); } },
-    "rv-retake": () => { closeReview(); restart(); startRec(); },
+    "rv-retake": () => { const sn = reviewing?.narration?.section; closeReview(); if (sn && timed()) { narrSec = sn.n - 1; syncSections(); } else restart(); startRec(); },
+    "rv-next": () => { const sn = reviewing?.narration?.section; if (reviewing) keepTake(reviewing); closeReview(); if (sn) goToSection(sn.n); },
     "cam-off": stopCam,
     "cam-view": () => { const v = S.camView || "corner"; S.camView = CAM_VIEWS[(CAM_VIEWS.indexOf(v) + 1) % CAM_VIEWS.length]; save(); applyCamView(); },
     create: async () => {
@@ -2294,6 +2406,7 @@ The reply includes a "url" — share it with me.`;
     else if (k === "ArrowDown") { e.preventDefault(); S.mode === "auto" ? setSpeed(S.speed - 1) : nudge(1); }
     else if (k === "ArrowLeft") nudge(-1);
     else if (k === "ArrowRight") nudge(1);
+    else if (timed() && (k === "[" || k === "]")) goToSection(narrSec + (k === "]" ? 1 : -1));
     else if (k === "Home") restart();
     else if (k === "v") setMode(S.mode === "voice" ? "auto" : "voice");
     else if (k === "m") actions.mirror();

@@ -105,6 +105,12 @@ body.points.dim-spoken .w.spoken { color: inherit; }
 #empty p { margin: 0 auto 26px; max-width: 30em; line-height: 1.55; }
 #empty .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 .has-script #empty { display: none; }
+#empty .e-video, body.narrating #empty .e-start { display: none; }
+body.narrating #empty .e-video { display: inline; }
+body.narrating.can-autotime #empty button.e-video { display: inline-flex; }
+body.narrating #empty { align-items: start; padding-top: 5vh; }
+#home-btn { display: none; }
+body.has-script #home-btn, body.narrating #home-btn { display: inline-flex; }
 
 #heard {
   position: absolute; left: 50%; bottom: 96px; transform: translate(-50%, 8px); z-index: 25; max-width: min(720px, calc(100vw - 32px));
@@ -162,7 +168,11 @@ body.timed #text p.sec-current { opacity: 1; }
 #text.editing .cue.tmark { display: inline; }
 #text.editing p.vline { display: block; }
 #narr-menu { position: fixed; z-index: 95; left: 50%; bottom: 96px; transform: translateX(-50%); min-width: 250px; padding: 6px; border-radius: 14px; display: flex; flex-direction: column; background: var(--ui-solid); }
-#narr-menu button { display: flex; align-items: center; justify-content: space-between; gap: 18px; height: 36px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; font-size: 13.5px; text-align: left; }
+#narr-link-form { display: flex; gap: 6px; padding: 6px 4px 4px; }
+#narr-link-form[hidden] { display: none; }
+#narr-link-form input { flex: 1; min-width: 260px; height: 34px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--ui-ink); font: 13.5px Inter, sans-serif; }
+#narr-link-form .btn { height: 34px; padding: 0 14px; }
+#narr-menu > button { display: flex; align-items: center; justify-content: space-between; gap: 18px; height: 36px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; font-size: 13.5px; text-align: left; }
 #narr-menu button:hover, #narr-menu button:focus-visible { background: rgba(255,255,255,.1); outline: none; }
 #narr-menu button small { color: var(--ui-mute); font-size: 12px; }
 #drop-hint { position: fixed; inset: 12px; z-index: 95; border: 2px dashed var(--accent); border-radius: 20px; display: grid; place-items: center;
@@ -434,10 +444,12 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
   <div id="heard" aria-live="polite"></div>
   <div id="empty">
     <div>
-      <h1>Ready when you are.</h1>
-      <p>Scripts your AI sends land here automatically. You can also paste one in and go.</p>
+      <h1><span class="e-start">Ready when you are.</span><span class="e-video">Now add the words.</span></h1>
+      <p><span class="e-start">Scripts your AI sends land here automatically. You can also paste one in, or bring a video to record a voiceover over it.</span><span class="e-video">Press ✨ Auto-time and Prompter writes a script from what's said in the video, already timed. Or paste your own.</span></p>
       <div class="row">
         <button class="btn primary big" data-act="new">Paste a script</button>
+        <button class="btn solid big e-start" data-act="narrate" style="color:var(--ink)">Voiceover a video</button>
+        <button class="btn solid big e-video" data-act="narr-auto" style="color:var(--ink)">✨ Auto-time</button>
         <button class="btn solid big" data-act="library" style="color:var(--ink)">Open library</button>
       </div>
     </div>
@@ -447,6 +459,9 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
 <div id="top">
   <button class="btn round glass" data-act="library" title="Library (L)" aria-label="Library">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h13"/></svg>
+  </button>
+  <button class="btn round glass" id="home-btn" data-act="home" title="Start something new: back to the start screen" aria-label="Start something new">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
   </button>
   <div id="title-pill" class="glass"></div>
   <div class="spacer"></div>
@@ -543,7 +558,11 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
 <input type="file" id="narr-file" accept="video/*" hidden>
 <div id="narr-menu" class="glass" role="menu" hidden>
   <button role="menuitem" data-act="narr-file">Choose a video file <small>stays on this computer</small></button>
-  <button role="menuitem" data-act="narr-link">Paste a video link <small>.mp4 or similar</small></button>
+  <button role="menuitem" data-act="narr-link">Paste a video link <small>video file or the page it's on</small></button>
+  <form id="narr-link-form" hidden>
+    <input id="narr-link-input" type="url" placeholder="https://…" aria-label="Video link" autocomplete="off" spellcheck="false">
+    <button type="submit" class="btn primary">Load</button>
+  </form>
 </div>
 <div id="drop-hint">Drop a video to narrate over it</div>
 <div id="rec-pill" hidden><i></i><span>0:00</span><button data-act="flub" title="Mark a flub (X)">Flub</button></div>
@@ -883,6 +902,17 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     measure(); markSpoken(); updateWpm();
   }
 
+  // Back to the start screen: no script open, no video loaded.
+  function goHome() {
+    if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
+    if (inlineEdit) return toast("Finish editing first.", null, 3000);
+    if (playing) pause();
+    if (narr) closeNarration();
+    current = null; render("");
+    $("#title-pill").textContent = ""; document.title = "Prompter";
+    history.replaceState(null, "", location.pathname); store.set("last", null);
+    renderList();
+  }
   function load(script, { keepPlace = false } = {}) {
     const wasPlaying = playing;
     if (playing) pause();
@@ -1256,6 +1286,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#record").title = "Record your voiceover (R)";
     applyNarrSound(); showBackButton(); showAutoButton(); narrSec = 0; syncSections();
     requestAnimationFrame(() => { measure(); if (timed()) goToSection(0); else placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
+    if (!words.length) return; // the start screen says what to do next
     toast(timed() ? `This script is timed to the video. Record counts you in and runs to the end. [ and ] pick where to start.`
       : "Press Record to narrate. The video plays muted and only your voice is recorded.", null, 6000);
   }
@@ -1381,7 +1412,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("#record").title = "Record your voiceover (R)";
     applyNarrSound(); showBackButton(); showAutoButton(); narrSec = 0; syncSections();
     requestAnimationFrame(() => { measure(); if (timed()) goToSection(0); else placeAt(S.mode === "voice" ? cursor : wordAtGuide()); });
-    if (!fromScript) toast(timed() ? `This script is timed to the video. Record counts you in and runs to the end.` : "Press Record to narrate. Only your voice is recorded.", null, 5000);
+    if (!fromScript && words.length) toast(timed() ? `This script is timed to the video. Record counts you in and runs to the end.` : "Press Record to narrate. Only your voice is recorded.", null, 5000);
   }
   narrVideo.addEventListener("error", () => {
     if (!narr?.remote) return;
@@ -1391,7 +1422,8 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   // Opening a script that names its video loads it; a file you chose yourself is never replaced.
   function syncScriptVideo() {
     if (recorder || recCountdown) return;
-    if (scriptVideo) { if (!narr || (narr.remote && narr.url !== scriptVideo)) loadNarrationUrl(scriptVideo, { fromScript: true }); }
+    const chosenHere = narr && "chosenFor" in narr && narr.chosenFor === (current?.id ?? null);
+    if (scriptVideo) { if (!narr || (narr.remote && narr.url !== scriptVideo && !chosenHere)) loadNarrationUrl(scriptVideo, { fromScript: true }); }
     else if (narr?.fromScript) closeNarration();
   }
   // Writes (or replaces) the script's [video: …] line, so the link comes back next time and on other devices.
@@ -1404,11 +1436,29 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     toast("Saved. This script now opens with its video.", null, 3500);
   }
   function pasteVideoLink() {
-    const url = (prompt("Paste a link to a video file (one ending in .mp4, for example). It has to open without signing in.") || "").trim();
-    if (!url) return;
-    loadNarrationUrl(url);
-    if (narr?.remote && current && words.length) setTimeout(() => { if (narr?.url === url) toast("Keep this video with the script?", () => rememberVideo(url), 12000, "Keep it"); }, 5200);
+    $("#narr-menu").hidden = false; $("#narr-link-form").hidden = false;
+    const inp = $("#narr-link-input"); inp.value = ""; setTimeout(() => inp.focus(), 0);
   }
+  $("#narr-link-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    let url = $("#narr-link-input").value.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+    $("#narr-link-form").hidden = true; $("#narr-menu").hidden = true;
+    // A link to a page (not a video file): ask the server to find the video on it.
+    if (!/\.(mp4|m4v|mov|webm|ogv)(\?|#|$)/i.test(url) && key) {
+      try {
+        const r = await fetch("/api/findvideo?url=" + encodeURIComponent(url), { headers: { authorization: "Bearer " + key } });
+        const o = await r.json().catch(() => ({}));
+        if (o.video) { if (o.video !== url) toast("Found the video on that page.", null, 2500); url = o.video; }
+        else if (o.error) return toast(o.error, null, 7000);
+      } catch {}
+    }
+    loadNarrationUrl(url);
+    if (narr) narr.chosenFor = current?.id ?? null; // you picked this one: don't swap it for the script's own video
+    if (narr?.remote && current && words.length) setTimeout(() => { if (narr?.url === url) toast("Keep this video with the script?", () => rememberVideo(url), 12000, "Keep it"); }, 2500);
+  });
+  $("#narr-link-input").addEventListener("keydown", e => { if (e.key === "Escape") { $("#narr-link-form").hidden = true; $("#narr-menu").hidden = true; } });
   function closeNarration() {
     if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
     stopPlayback(); narrVideo.pause(); const was = narr; narr = null; narrVideo.removeAttribute("src"); narrVideo.load();
@@ -1426,7 +1476,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     try { const r = await fetch("/api/autotime", { headers: { authorization: "Bearer " + key } }); if (r.ok) autoTime.enabled = !!(await r.json()).enabled; } catch {}
     showAutoButton();
   }
-  function showAutoButton() { $("#narr-auto").hidden = !(narr && autoTime.enabled && key); }
+  function showAutoButton() { $("#narr-auto").hidden = !(narr && autoTime.enabled && key); document.body.classList.toggle("can-autotime", !!(autoTime.enabled && key)); }
   // A small 16 kHz mono WAV of the video's sound: all the speech service needs, and far smaller than the video.
   async function speechWav(file) {
     const dec = await new OfflineAudioContext(1, 1, 16000).decodeAudioData(await file.arrayBuffer())
@@ -2578,10 +2628,11 @@ The reply includes a "url" — share it with me.`;
       markSaved();
     },
     record: () => (recorder || recCountdown ? stopRec() : startRec()),
-    narrate: () => { $("#narr-menu").hidden = !$("#narr-menu").hidden; },
-    "narr-pick": () => { $("#narr-menu").hidden = !$("#narr-menu").hidden; },
+    narrate: () => { $("#narr-link-form").hidden = true; $("#narr-menu").hidden = !$("#narr-menu").hidden; },
+    home: () => goHome(),
+    "narr-pick": () => { $("#narr-link-form").hidden = true; $("#narr-menu").hidden = !$("#narr-menu").hidden; },
     "narr-file": () => { $("#narr-menu").hidden = true; $("#narr-file").click(); },
-    "narr-link": () => { $("#narr-menu").hidden = true; pasteVideoLink(); },
+    "narr-link": () => pasteVideoLink(),
     "narr-close": closeNarration,
     "sec-prev": () => goToSection(narrSec - 1),
     "sec-next": () => goToSection(narrSec + 1),

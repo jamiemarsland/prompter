@@ -534,7 +534,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
 </div>
 <div id="narr-wrap" hidden>
   <video id="narr-video" muted playsinline preload="auto"></video>
-  <div class="narr-bar"><span id="narr-name"></span><span id="narr-sec" hidden><button data-act="sec-prev" title="Previous section ([)" aria-label="Previous section">‹</button><b id="narr-sec-label"></b><button data-act="sec-next" title="Next section (])" aria-label="Next section">›</button><button data-act="sec-roll" id="narr-roll" title="Stop at the end of each section, or keep recording into the next ones"></button></span><span id="narr-time">0:00</span><button data-act="narr-sound" id="narr-sound" title="Hear the video's own sound while you record (wear headphones)">Sound off</button><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
+  <div class="narr-bar"><span id="narr-name"></span><span id="narr-sec" hidden><button data-act="sec-prev" title="Previous section ([)" aria-label="Previous section">‹</button><b id="narr-sec-label"></b><button data-act="sec-next" title="Next section (])" aria-label="Next section">›</button><button data-act="sec-roll" id="narr-roll" title="Stop at the end of each section, or keep recording into the next ones"></button></span><button data-act="narr-play" id="narr-play" title="Watch the video without recording (P)">▶ Play</button><span id="narr-time">0:00</span><button data-act="narr-sound" id="narr-sound" title="Hear the video's own sound while you record (wear headphones)">Sound off</button><button data-act="narr-pick" title="Use a different video">Change</button><button data-act="narr-close" title="Remove the video">✕</button></div>
 </div>
 <input type="file" id="narr-file" accept="video/*" hidden>
 <div id="narr-menu" class="glass" role="menu" hidden>
@@ -656,6 +656,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
       <kbd>+ −</kbd><span>Text size</span>
       <kbd>Home</kbd><span>Back to start</span>
       <kbd>R</kbd><span>Record / stop recording</span>
+      <kbd>P</kbd><span>Play / pause the narration video</span>
       <kbd>X</kbd><span>Mark a flub while recording</span>
       <kbd>M</kbd><span>Mirror</span>
       <kbd>F</kbd><span>Full screen</span>
@@ -700,6 +701,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
 <script>
 (() => {
   let pipWin = null; // the floating window, while the stage is living in it
+  let previewing = false; // watching the narration video without recording
   let narr = null; // { name, url } while a video is loaded for narration
   const $ = (s, el) => (el ? el.querySelector(s) : document.querySelector(s) || pipWin?.document.querySelector(s));
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -971,6 +973,11 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     const t = performance.now(); // not the frame's own timestamp: each window counts from a different start
     const dt = Math.min(0.1, (t - lastT) / 1000 || 0); lastT = t;
     narrTick();
+    if (previewing && timed() && !narrVideo.paused && !playing) {
+      const target = paceIdx ?? sections[narrSec]?.from ?? 0;
+      const d = Math.max(0, Math.min(maxPos, targetFor(target))) - pos;
+      if (Math.abs(d) > 0.5) { pos += d * Math.min(1, dt * 3.2); setScroll(pos); progress(); }
+    }
     if (playing) {
       if (S.mode === "auto" && secRun && paceIdx != null) {
         // Steady mode keeps time with the picture while a timed section is being recorded.
@@ -1285,6 +1292,11 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
         if (k !== secRun.i) { secRun.i = narrSec = k; syncSections(); }
       } else if (t >= secStop(secRun.i)) stopRec();
     }
+    if (previewing && timed() && !narrVideo.paused) {
+      // Watching: the script keeps up with the picture, section by section.
+      let k = 0; while (sections[k + 1] && t >= sections[k + 1].start - 0.3) k++;
+      if (k !== narrSec) { narrSec = k; syncSections(); }
+    }
     let i = null;
     const sc = timed() && !narrVideo.paused ? sections[secRun ? secRun.i : narrSec] : null, pc = sc?.pace;
     if (pc && t >= pc[0][1] && t < pc[pc.length - 1][1]) {
@@ -1348,6 +1360,19 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   }
   $("#narr-file").addEventListener("change", e => { loadNarration(e.target.files[0]); e.target.value = ""; });
   narrVideo.addEventListener("timeupdate", () => ($("#narr-time").textContent = clock(narrVideo.currentTime * 1000) + (narrVideo.duration ? " / " + clock(narrVideo.duration * 1000) : "")));
+  // Watching before recording: plays with the video's own sound, which goes back to the Sound setting when it stops.
+
+  function togglePreview() {
+    if (!narr) return;
+    if (recorder || recCountdown) return toast("Stop recording first.", null, 3000);
+    if (previewing) return stopPreview();
+    if (narrVideo.ended) narrVideo.currentTime = 0;
+    previewing = true; narrVideo.muted = false; narrVideo.volume = 0.8;
+    narrVideo.play().catch(() => stopPreview());
+  }
+  function stopPreview() { if (!previewing) return; previewing = false; narrVideo.pause(); applyNarrSound(); }
+  const playLabel = () => ($("#narr-play").textContent = previewing && !narrVideo.paused ? "❚❚ Pause" : "▶ Play");
+  ["play", "pause", "ended"].forEach(ev => narrVideo.addEventListener(ev, () => { if (ev !== "play" && previewing) { previewing = false; applyNarrSound(); } playLabel(); }));
   narrVideo.addEventListener("loadedmetadata", () => narrVideo.dispatchEvent(new Event("timeupdate")));
   let narrEndTimer = null;
   narrVideo.addEventListener("ended", () => { if (recorder && !narrEndTimer) narrEndTimer = setTimeout(() => { narrEndTimer = null; if (recorder) stopRec(); }, 600); }); // a beat of silence after the last frame
@@ -1414,6 +1439,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   async function startRec() {
     if (recorder || recCountdown) return;
     if (takesDir && !(await folderReady())) toast("No access to your takes folder, so takes will download instead.", null, 4000);
+    stopPreview();
     if (narr ? !(await startMic()) : !(await startCam())) return;
     if (playing) pause();
     narrTakeSec = null;
@@ -2370,6 +2396,7 @@ The reply includes a "url" — share it with me.`;
     "sec-prev": () => goToSection(narrSec - 1),
     "sec-next": () => goToSection(narrSec + 1),
     "sec-roll": () => { S.narrRoll = !S.narrRoll; save(); syncSections(); toast(S.narrRoll ? "Recording keeps going into the next sections until you stop." : "Recording stops at the end of each section.", null, 3500); },
+    "narr-play": () => togglePreview(),
     "narr-sound": () => { S.narrSound = !S.narrSound; save(); applyNarrSound(); if (S.narrSound) toast("Wear headphones, so the video's sound isn't recorded with your voice.", null, 4500); },
     flub: markFlub,
     popout: popOut,
@@ -2476,6 +2503,7 @@ The reply includes a "url" — share it with me.`;
     else if (k === "m") actions.mirror();
     else if (k === "r") actions.record();
     else if (k === "x") markFlub();
+    else if (k === "p" && narr) togglePreview();
     else if (k === "f") actions.fullscreen();
     else if (k === "l") openDrawer("library");
     else if (k === "a") openDrawer("settings");

@@ -38,4 +38,5 @@ class H(http.server.SimpleHTTPRequestHandler):
         TAKES[:] = [t for t in TAKES if not s.path.endswith("/" + t["id"])]
         s.j({"ok": True})
     def log_message(s,*a): pass
-http.server.ThreadingHTTPServer(("127.0.0.1", 8765), H).serve_forever()
+import os
+http.server.ThreadingHTTPServer(("127.0.0.1", int(os.environ.get("PORT", 8765))), H).serve_forever()

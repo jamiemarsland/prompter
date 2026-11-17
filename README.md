@@ -33,6 +33,8 @@ Send a list with one `- ` line per point instead of a script, and Prompter treat
 
 Drop a video onto Prompter (or press the narrate button) to record a voiceover for it. The video plays muted above the script while only your voice is recorded, with voice following, talking points and flub markers working as usual. You review it as the video with your new voice over it. The audio saves to your takes folder with a `.json` notes file saying which video it belongs to and where in it the voice starts, and your AI gets the same details through `get_take`. The video never leaves your computer.
 
+To watch the video before you record, press **Play** in the bar under it (or P). It plays with its own sound, and if the script is timed (see below) the words move along with the picture.
+
 ### A video from a link
 
 The narrate button also takes a link, as long as it points straight at a video file (one ending in `.mp4`, say) that opens without signing in. A YouTube or Vimeo page won't work. Prompter offers to keep the link with the script, as a paragraph of its own:

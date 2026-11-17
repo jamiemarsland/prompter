@@ -37,6 +37,10 @@ To watch the video before you record, press **Play** in the bar under it (or P).
 
 Once you've recorded a take, **Hear take** (or B) in the same bar plays your latest take over the video right there, with the words following, so you can check it lines up.
 
+### Enhanced audio
+
+Each narration take is cleaned up right after you record it, in your browser: rumble is cut, background noise is removed with [RNNoise](https://github.com/xiph/rnnoise) (the WebAssembly build from [@shiguredo/rnnoise-wasm](https://github.com/shiguredo/rnnoise-wasm), Apache 2.0, in `app/vendor/`), the voice gets a gentle EQ and de-ess, its level is evened out, and the result is set to -16 LUFS with peaks under -1 dBFS. It saves as a 48 kHz WAV beside your original, which is always kept. The review's "Hearing: enhanced / original" button switches between them, and Hear take plays whichever you picked. Turn it off with "Enhance narration audio" in Settings. Nothing is uploaded.
+
 ### A video from a link
 
 The narrate button also takes a link, as long as it points straight at a video file (one ending in `.mp4`, say) that opens without signing in. A YouTube or Vimeo page won't work. Prompter offers to keep the link with the script, as a paragraph of its own:

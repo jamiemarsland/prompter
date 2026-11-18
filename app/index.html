@@ -24,7 +24,7 @@
   --font: "Inter", system-ui, sans-serif;
   --size: 56px;
   --lh: 1.45;
-  --measure: 34em;
+  --measure: 90vw;
   --guide: 38%;
   --align: left;
 }
@@ -51,7 +51,7 @@ button { cursor: pointer; }
 .mirror-y #scroller { transform: scaleY(-1); }
 .mirror-x.mirror-y #scroller { transform: scale(-1, -1); }
 #text {
-  max-width: var(--measure); margin: 0 auto; padding: 0 6vw;
+  width: min(100%, var(--measure)); margin: 0 auto; padding: 0 max(24px, 3vw);
   padding-top: var(--guide-vh); padding-bottom: 100vh;
   font-family: var(--font); font-size: var(--size); line-height: var(--lh);
   text-align: var(--align); letter-spacing: -0.005em; font-weight: 500;
@@ -392,6 +392,10 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px;
 input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--ui-ink); border: 0; }
 .slider { margin: 4px 0 14px; }
 .slider .row { margin: 0; }
+.reset { margin-left: auto; background: none; border: 0; padding: 3px 7px; border-radius: 7px; color: var(--ui-mute); font: 500 12px Inter, sans-serif; cursor: pointer; visibility: hidden; }
+.reset.on { visibility: visible; }
+.reset:hover { color: var(--ui-ink); background: rgba(255,255,255,.08); }
+.label .reset { float: right; margin-top: -3px; text-transform: none; letter-spacing: 0; }
 .swatches { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
 .sw { height: 54px; border-radius: 12px; border: 2px solid transparent; display: grid; place-items: center; font-size: 17px; font-weight: 600; position: relative; }
 .sw.on { border-color: var(--ui-ink); }
@@ -648,7 +652,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: r
     <div class="label">Text</div>
     <div class="slider"><div class="row"><span>Size</span><output id="o-size"></output></div><input type="range" id="s-size" min="24" max="140" step="2"></div>
     <div class="slider"><div class="row"><span>Line spacing</span><output id="o-lh"></output></div><input type="range" id="s-lh" min="1.1" max="2.2" step="0.05"></div>
-    <div class="slider"><div class="row"><span>Line width</span><output id="o-measure"></output></div><input type="range" id="s-measure" min="12" max="60" step="1"></div>
+    <div class="slider"><div class="row"><span>Line width</span><output id="o-measure"></output></div><input type="range" id="s-measure" min="30" max="100" step="5"></div>
     <div class="slider"><div class="row"><span>Reading line</span><output id="o-guide"></output></div><input type="range" id="s-guide" min="12" max="70" step="1"></div>
     <div class="row"><span>Centre text</span><label class="toggle"><input type="checkbox" id="t-center"><i></i></label></div>
 
@@ -764,12 +768,16 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     mono: ['"JetBrains Mono", monospace', "Mono"],
   };
   const small = matchMedia("(max-width: 720px)").matches;
-  const S = Object.assign({
-    theme: "night", font: "sans", size: small ? 38 : 60, lh: 1.45, measure: 32, guide: 34, center: false,
+  const DEFAULTS = {
+    theme: "night", font: "sans", size: small ? 38 : 60, lh: 1.45, measure: 90, guide: 34, center: false,
     showGuide: true, dim: true, countdown: true, enhance: true, hearOriginal: false, mergeSound: true, mirrorX: false, mirrorY: false, autoload: true,
     mode: "SpeechRecognition" in window || "webkitSpeechRecognition" in window ? "voice" : "auto", speed: 10, lang: navigator.language?.startsWith("en-GB") ? "en-GB" : "en-US",
-  }, store.get("settings", {}));
+  };
+  const S = Object.assign({}, DEFAULTS, store.get("settings", {}));
+  // Line width used to be in em, which scaled with the text and ran off the screen. It's now a share of the screen.
+  if (!S.widthPct) { S.measure = 90; S.widthPct = true; }
   const save = () => store.set("settings", S);
+  const resets = []; // { btn, keys }: the Reset buttons in settings
 
   function applySettings() {
     const r = document.documentElement.style;
@@ -778,7 +786,7 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     r.setProperty("--font", FONTS[S.font][0]);
     r.setProperty("--size", S.size + "px");
     r.setProperty("--lh", S.lh);
-    r.setProperty("--measure", S.measure + "em");
+    r.setProperty("--measure", S.measure + "vw");
     r.setProperty("--guide", S.guide + "%");
     r.setProperty("--guide-vh", S.guide + "vh");
     r.setProperty("--align", S.center ? "center" : "left");
@@ -789,12 +797,13 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
     $("meta[name=theme-color]").content = THEMES.find(t => t[0] === S.theme)[2];
     $("#o-size").textContent = S.size + "px";
     $("#o-lh").textContent = (+S.lh).toFixed(2);
-    $("#o-measure").textContent = S.measure + "em";
+    $("#o-measure").textContent = S.measure + "%";
     $("#o-guide").textContent = S.guide + "%";
     $$("#themes .sw").forEach(el => el.classList.toggle("on", el.dataset.theme === S.theme));
     $$("#fonts button").forEach(el => el.classList.toggle("on", el.dataset.font === S.font));
     $$(".seg [data-mode]").forEach(el => el.classList.toggle("on", el.dataset.mode === S.mode));
     $("#speed-val").textContent = S.speed;
+    resets.forEach(r => r.btn.classList.toggle("on", r.keys.some(k => S[k] !== DEFAULTS[k])));
     (pipWin || window).requestAnimationFrame(() => { measure(); if (!playing) snapToCursor(); updateWpm(); });
   }
 
@@ -816,7 +825,34 @@ Tips: blank lines start new paragraphs. [Brackets] become stage cues that voice 
   bindToggle("#t-countdown", "countdown"); bindToggle("#t-enhance", "enhance"); bindToggle("#t-mirrorx", "mirrorX"); bindToggle("#t-mirrory", "mirrorY");
   bindToggle("#t-autoload", "autoload");
   $("#s-lang").value = S.lang;
-  $("#s-lang").addEventListener("change", e => { S.lang = e.target.value; save(); if (recog) { stopVoice(); if (playing) startVoice(); } });
+  $("#s-lang").addEventListener("change", e => { S.lang = e.target.value; save(); applySettings(); if (recog) { stopVoice(); if (playing) startVoice(); } });
+
+  // A "Reset" next to each setting, shown once it's been changed from the default.
+  function addReset(keys, where, before, sync) {
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "reset"; btn.textContent = "Reset"; btn.title = "Back to the default";
+    where.insertBefore(btn, before);
+    btn.addEventListener("click", e => {
+      e.preventDefault(); e.stopPropagation();
+      const was = S.lang;
+      keys.forEach(k => { S[k] = DEFAULTS[k]; }); sync?.(); save(); applySettings();
+      if (S.lang !== was && recog) { stopVoice(); if (playing) startVoice(); }
+    });
+    resets.push({ btn, keys });
+  }
+  [["#s-size", "size"], ["#s-lh", "lh"], ["#s-measure", "measure"], ["#s-guide", "guide"]].forEach(([id, k]) => {
+    const row = $(id).closest(".slider").querySelector(".row");
+    addReset([k], row, row.querySelector("output"), () => { $(id).value = S[k]; });
+  });
+  [["#t-center", "center"], ["#t-guide", "showGuide"], ["#t-dim", "dim"], ["#t-countdown", "countdown"], ["#t-enhance", "enhance"],
+   ["#t-mirrorx", "mirrorX"], ["#t-mirrory", "mirrorY"], ["#t-autoload", "autoload"]].forEach(([id, k]) => {
+    const tog = $(id).closest(".toggle");
+    addReset([k], tog.parentNode, tog, () => { $(id).checked = !!S[k]; });
+  });
+  addReset(["lang"], $("#s-lang").parentNode, $("#s-lang"), () => { $("#s-lang").value = S.lang; });
+  addReset(["theme"], $("#themes").previousElementSibling, null);
+  addReset(["font"], $("#fonts").previousElementSibling, null);
+  applySettings();
 
   // ---------- Script rendering ----------
   const textEl = $("#text"), scroller = $("#scroller");
